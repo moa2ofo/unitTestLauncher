@@ -1,3 +1,0 @@
-| function_name | total | passed | failed | ignored | linesCvrg | branchesCvrg | Date and time  | Tester  |
-|---------------|-------|--------|--------|---------|-----------|--------------|----------------|---------|
-| BuildTbl      | 6     | 6      | 0      | 0       | 100.0%    | 100.0%       | 22/01/26 10:37 | MOA2OFO |

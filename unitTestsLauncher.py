@@ -52,7 +52,7 @@ def preflight_checks(project_root: Path):
     require_python(3, 8)
     require_command("docker")
     require_dir(project_root, "Project root")
-    require_dir(project_root / "code", "Code directory ('code')")
+    #require_dir(project_root / "code", "Code directory ('code')")
     require_docker_running()
     info("Preflight checks OK.")
 
@@ -571,7 +571,7 @@ if __name__ == "__main__":
         min_python=(3,8),
         require_docker=True,
         check_docker_daemon=True,
-        required_dirs=[(PROJECT_ROOT, 'Project root'), (PROJECT_ROOT / 'code', "Code directory ('code')")],
+        #required_dirs=[(PROJECT_ROOT, 'Project root'), (PROJECT_ROOT / 'code', "Code directory ('code')")],
     )
 
     if len(sys.argv) < 2:

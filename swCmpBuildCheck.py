@@ -26,28 +26,54 @@ from common_utils import (
 # Default MISRA rules file path (adjust if needed)
 MISRA_RULES_PATH = Path(__file__).resolve().parent / "misra" / "misra_c_2012_headlines.txt"
 
-def copy_cfg_and_pltf(codebase_root: Path, script_dir: Path) -> None:
+def copy_folder(codebase_root: Path, script_dir: Path, folder_to_move: str | Path) -> None:
     """
-    Copy folders 'cfg' and 'pltf' from codebase_root into script_dir.
-    - Overwrites existing destination folders (if present).
-    - Raises FileNotFoundError if a required source folder is missing.
+    Copy a folder from `codebase_root` into `script_dir`.
+
+    Safety / robustness:
+    - `folder_to_move` may be str or Path.
+    - Leading '/' or '\\' is treated as accidental (e.g. "/build") and stripped.
+    - If `folder_to_move` contains "..", destination is forced to be inside `script_dir`
+      using only the folder's final name (e.g. "../cfg" -> script_dir/"cfg").
+    - Existing destination is removed before copy (clean overwrite).
     """
-    for name in ("cfg", "pltf"):
-        src = (codebase_root / name).resolve()
-        dst = (script_dir / name).resolve()
+    codebase_root = Path(codebase_root).resolve()
+    script_dir = Path(script_dir).resolve()
 
-        if not src.is_dir():
-            raise FileNotFoundError(f"Required folder not found: {src}")
+    # Normalize user input (handle "/build" -> "build")
+    raw = str(folder_to_move).strip()
+    raw = raw.lstrip("/\\")
+    rel = Path(raw)
 
-        # Remove destination first to ensure a clean copy
-        if dst.exists():
-            shutil.rmtree(dst)
+    # Source is always resolved relative to codebase_root
+    src = (codebase_root / rel).resolve()
 
-        shutil.copytree(src, dst)
+    if not src.is_dir():
+        raise FileNotFoundError(f"Required folder not found: {src}")
+
+    # Prevent destination escaping script_dir via ".."
+    if ".." in rel.parts:
+        dst_rel = Path(rel.name)  # e.g. "../cfg" -> "cfg"
+    else:
+        dst_rel = rel
+
+    dst = (script_dir / dst_rel).resolve()
+
+    # Extra guard: ensure dst is within script_dir
+    try:
+        dst.relative_to(script_dir)
+    except ValueError:
+        # fallback: force inside script_dir
+        dst = script_dir / rel.name
+
+    if dst.exists():
+        shutil.rmtree(dst)
+
+    shutil.copytree(src, dst)
 
 
 # Example usage inside main():
-# copy_cfg_and_pltf(codebase_root=codebase_root, script_dir=script_dir)
+# copy_folder(codebase_root=codebase_root, script_dir=script_dir)
 # -------------------------
 # Requirements / preflight
 # -------------------------
@@ -422,7 +448,14 @@ def main():
 
     template_path = script_dir / "CMakeLists.txt"
     codebase_root = script_dir.parent
-    copy_cfg_and_pltf(codebase_root,script_dir)
+    cfg_path = codebase_root / ".." / "cfg"
+    pltf_path = codebase_root / ".." / "pltf"
+    build_path = script_dir/"build"
+    cfg_path = cfg_path.resolve()
+    pltf_path = pltf_path.resolve()
+    build_path = build_path.resolve()
+    copy_folder(codebase_root, script_dir, "cfg")
+    copy_folder(codebase_root, script_dir, "pltf")
     template_content = template_path.read_text(encoding="utf-8", errors="replace")
     misra_rules_path = MISRA_RULES_PATH
 
@@ -432,10 +465,12 @@ def main():
         build_and_run_docker(script_dir)
     except subprocess.CalledProcessError:
         fatal("Docker build/run failed. See error details above.")
-
+#    finally:
+#        _cleanup_generated(created)
 
     generate_reports(codebase_root, misra_rules_path)
     move_file(script_dir,"cppcheck_misra_results.html",codebase_root)
+    copy_folder(script_dir, codebase_root, "build")
     delete_cfg_and_pltf(script_dir)
     info("Done.")
 

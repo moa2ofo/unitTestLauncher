@@ -17,7 +17,8 @@ from common_utils import (
     require_python, require_command, require_dir,
     require_docker_running,
     run_cmd, docker_mount_path,
-    preflight_check
+    preflight_check,
+    clear_folder
 )
 
 UNIT_TEST_PREFIX = "TEST_"
@@ -294,22 +295,6 @@ def copy_folder_contents(src_folder: Path, dest_folder: Path):
         except Exception as e:
             warn(f"Copy failed for '{item}': {e}")
 
-
-def clear_folder(folder_path: Path):
-    if not folder_path.exists():
-        warn(f"Folder does not exist: {folder_path}")
-        return
-
-    for item in folder_path.iterdir():
-        try:
-            if item.is_file() or item.is_symlink():
-                item.unlink()
-            elif item.is_dir():
-                shutil.rmtree(item)
-        except Exception as e:
-            warn(f"Error deleting '{item}': {e}")
-
-    info(f"Folder cleared: {folder_path}")
 
 
 def update_unit_under_test(module: UnitModule, unit_name: str):
@@ -612,6 +597,9 @@ if __name__ == "__main__":
     if sys.argv[1] in ("-h", "--help", "help"):
         print_help()
         sys.exit(0)
+    
+    clear_folder(UNIT_EXECUTION_FOLDER)
+    clear_folder(UNIT_RESULT_FOLDER)
 
     unit_to_test = extract_function_name(sys.argv[1])
     info(f"Selected argument (function to test): {unit_to_test}")
@@ -619,7 +607,6 @@ if __name__ == "__main__":
     modules = build_modules(PROJECT_ROOT)
 
     if unit_to_test == "all":
-        clear_folder(UNIT_RESULT_FOLDER)
         for module in modules:
             info(f"Processing unit: {module.function_name}")
             try:
@@ -639,4 +626,5 @@ if __name__ == "__main__":
     format_total_result_report(UNIT_RESULT_FOLDER)
     move_ut_results(SCRIPT_PATH)
     clear_folder(UNIT_EXECUTION_FOLDER)
+    clear_folder(UNIT_RESULT_FOLDER)
     info("Done.")

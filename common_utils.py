@@ -275,6 +275,26 @@ def backup_if_exists(path: Path, suffix: str = ".bak") -> Optional[Path]:
     return None
 
 
+
+# -------------------------
+# Files helpers
+# -------------------------
+
+def delete_file(file_path: Path):
+    """Delete a single file or symlink."""
+    if not file_path.exists():
+        warn(f"File does not exist: {file_path}")
+        return
+
+    try:
+        if file_path.is_file() or file_path.is_symlink():
+            file_path.unlink()
+            info(f"File deleted: {file_path}")
+        else:
+            warn(f"Path is not a file: {file_path}")
+    except Exception as e:
+        warn(f"Error deleting file '{file_path}': {e}")
+
 # -------------------------
 # Folder helpers
 # -------------------------

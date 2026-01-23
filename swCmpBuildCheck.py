@@ -366,23 +366,24 @@ def _cleanup_generated(created: list[Path]) -> None:
             warn(f"Could not delete {cmake_path}: {e}")
 
 
-def move_file(src_folder: str | Path, filename: str, dst_folder: str | Path, *, overwrite: bool = True) -> Path:
+def move_latest_report(workspace: Path, filename: str, dest_folder: Path, *, overwrite: bool = True) -> Path:
     """
-    Move `filename` from `src_folder` to `dst_folder`.
-
-    - Creates dst_folder if it doesn't exist
-    - If overwrite=False and destination exists -> raises FileExistsError
-    - Returns the destination Path
+    Find all `filename` under `workspace` recursively, pick the most recently modified,
+    and move it into `dest_folder/filename`.
     """
-    src_folder = Path(src_folder).resolve()
-    dst_folder = Path(dst_folder).resolve()
+    workspace = Path(workspace).resolve()
+    dest_folder = Path(dest_folder).resolve()
+    dest_folder.mkdir(parents=True, exist_ok=True)
 
-    src_path = (src_folder / filename).resolve()
-    dst_folder.mkdir(parents=True, exist_ok=True)
-    dst_path = (dst_folder / filename).resolve()
+    candidates = list(workspace.rglob(filename))
+    candidates = [p for p in candidates if p.is_file()]
 
-    if not src_path.is_file():
-        raise FileNotFoundError(f"Source file not found: {src_path}")
+    if not candidates:
+        raise FileNotFoundError(f"No '{filename}' found under: {workspace}")
+
+    # Pick newest by modification time
+    src_path = max(candidates, key=lambda p: p.stat().st_mtime)
+    dst_path = (dest_folder / filename).resolve()
 
     if dst_path.exists():
         if not overwrite:
@@ -394,6 +395,7 @@ def move_file(src_folder: str | Path, filename: str, dst_folder: str | Path, *, 
 
     moved_to = shutil.move(str(src_path), str(dst_path))
     return Path(moved_to)
+
 
 
 # NOTE: This function is no longer used (we move only the workspace report).
@@ -490,12 +492,12 @@ def main():
     # Generate HTML reports from XMLs under repo_root
     generate_reports(repo_root, MISRA_RULES_PATH)
 
-    # Move ONLY the workspace report one level up (script_dir -> repo_root)
+    # Move the newest report generated inside the workspace (script_dir tree) one level up
     try:
-        moved = move_file(script_dir, "cppcheck_misra_results.html", repo_root, overwrite=True)
+        moved = move_latest_report(script_dir, "cppcheck_misra_results.html", repo_root, overwrite=True)
         info(f"Moved report: {moved}")
-    except FileNotFoundError:
-        warn(f"Workspace report not found (nothing to move): {script_dir / 'cppcheck_misra_results.html'}")
+    except FileNotFoundError as e:
+        warn(str(e))
 
     # Copy build back to repo root (if it exists)
     copy_into_workspace(script_dir / "build", repo_root, "build")

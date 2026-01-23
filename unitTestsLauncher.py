@@ -97,6 +97,37 @@ class UnitModule:
     def test_c_path(self) -> Path:
         return self.test_case_folder / "src" / f"{self.function_name}.c"
 
+from pathlib import Path
+
+def move_ut_results(script_path: Path) -> None:
+    """
+    Move (copy + overwrite) the folder:
+        script_path.parent / "utExecutionAndResults" / "utResults"
+    into:
+        script_path.parent.parent / "utResults"
+
+    Uses:
+        clear_folder()
+        copy_folder_contents()
+    """
+
+    src = script_path.parent / "utExecutionAndResults" / "utResults"
+    dst = script_path.parent.parent / "utResults"
+
+    # If source doesn't exist, nothing to do
+    if not src.exists():
+        warn(f"Source folder does not exist: {src}")
+        return
+
+    # Ensure destination folder exists, then clear it
+    dst.mkdir(parents=True, exist_ok=True)
+    clear_folder(dst)
+
+    # Copy contents from src → dst
+    copy_folder_contents(src, dst)
+
+    info(f"utResults moved to: {dst}")
+
 
 def find_function_definition(root: Path, func_name: str):
     results = []
@@ -606,5 +637,6 @@ if __name__ == "__main__":
             fatal(f"Unit test failed for '{unit_to_test}'. See error details above.")
 
     format_total_result_report(UNIT_RESULT_FOLDER)
+    move_ut_results(SCRIPT_PATH)
     clear_folder(UNIT_EXECUTION_FOLDER)
     info("Done.")

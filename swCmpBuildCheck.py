@@ -1,7 +1,7 @@
+
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import os
 import getpass
 from datetime import datetime
 import xml.etree.ElementTree as ET
@@ -12,7 +12,6 @@ from typing import Union, Dict
 import sys
 import subprocess
 import shutil
-
 
 from common_utils import (
     info, warn, error, fatal,
@@ -26,49 +25,35 @@ from common_utils import (
 # Default MISRA rules file path (adjust if needed)
 MISRA_RULES_PATH = Path(__file__).resolve().parent / "misra" / "misra_c_2012_headlines.txt"
 
-def copy_folder(codebase_root: Path, script_dir: Path, folder_to_move: str | Path) -> None:
+
+def copy_into_workspace(src_dir: Path, workspace: Path, name: str) -> Path:
     """
-    Copy a folder from `codebase_root` into `script_dir`.
-
-    If the source folder does not exist, the function silently returns.
+    Copy folder `src_dir` into `workspace/name`.
+    - Skips if source doesn't exist.
+    - Overwrites destination if it exists.
+    Returns destination path.
     """
-    codebase_root = Path(codebase_root).resolve()
-    script_dir = Path(script_dir).resolve()
+    src_dir = Path(src_dir).resolve()
+    workspace = Path(workspace).resolve()
+    dst_dir = (workspace / name).resolve()
 
-    # Normalize user input (handle "/build" -> "build")
-    raw = str(folder_to_move).strip()
-    raw = raw.lstrip("/\\")
-    rel = Path(raw)
+    if not src_dir.is_dir():
+        warn(f"Skip copy: source folder not found: {src_dir}")
+        return dst_dir
 
-    # Source is always resolved relative to codebase_root
-    src = (codebase_root / rel).resolve()
-
-    # If folder doesn't exist, skip instead of raising
-    if not src.is_dir():
-        return  # <-- changed behavior
-
-    # Prevent destination escaping script_dir via ".."
-    if ".." in rel.parts:
-        dst_rel = Path(rel.name)
-    else:
-        dst_rel = rel
-
-    dst = (script_dir / dst_rel).resolve()
-
-    # Extra guard: ensure dst is within script_dir
+    # Ensure destination is within workspace
     try:
-        dst.relative_to(script_dir)
+        dst_dir.relative_to(workspace)
     except ValueError:
-        dst = script_dir / rel.name
+        raise ValueError(f"Destination escapes workspace: {dst_dir}")
 
-    if dst.exists():
-        shutil.rmtree(dst)
+    if dst_dir.exists():
+        shutil.rmtree(dst_dir)
 
-    shutil.copytree(src, dst)
+    shutil.copytree(src_dir, dst_dir)
+    return dst_dir
 
 
-# Example usage inside main():
-# copy_folder(codebase_root=codebase_root, script_dir=script_dir)
 # -------------------------
 # Requirements / preflight
 # -------------------------
@@ -80,7 +65,7 @@ def preflight_checks(script_dir: Path) -> None:
     require_command("docker")
 
     require_file(script_dir / "CMakeLists.txt", "Template CMakeLists.txt")
-    #require_dir(script_dir / "code", "Code directory")
+    # require_dir(script_dir / "code", "Code directory")
 
     if not MISRA_RULES_PATH.is_file():
         warn(
@@ -93,11 +78,11 @@ def preflight_checks(script_dir: Path) -> None:
 
 
 # ----------------------------------------------------
-# Existing logic (unchanged, except for robust I/O)
+# Existing logic (cleaned paths)
 # ----------------------------------------------------
 def load_misra_rules(misra_rules_path: Union[str, Path]) -> Dict[str, str]:
     rules: Dict[str, str] = {}
-    path = Path(misra_rules_path)
+    path = Path(misra_rules_path).resolve()
 
     if not path.is_file():
         warn(f"MISRA rules file not found: {path}. cppcheck severities will be used instead.")
@@ -134,20 +119,19 @@ def delete_cfg_and_pltf(script_dir: Path) -> None:
     Delete folders 'cfg' and 'pltf' from script_dir if they exist.
     Safe if folders are missing.
     """
+    script_dir = Path(script_dir).resolve()
     for name in ("cfg", "pltf"):
         target = (script_dir / name).resolve()
 
-        # Remove directory if present; ignore if it's missing
         if target.is_dir():
             shutil.rmtree(target)
         elif target.exists():
-            # Exists but isn't a directory (file/symlink) -> remove it
             target.unlink()
 
 
 def generate_html_for_cppcheck_xml(xml_path: Union[str, Path], misra_rules_path: Union[str, Path]) -> str:
-    xml_path = str(xml_path)
-    xml_dir = os.path.dirname(xml_path)
+    xml_path = Path(xml_path).resolve()
+    xml_dir = xml_path.parent
 
     tree = ET.parse(xml_path)
     root = tree.getroot()
@@ -210,37 +194,21 @@ def generate_html_for_cppcheck_xml(xml_path: Union[str, Path], misra_rules_path:
             col_ = loc.attrib.get("column", "")
             info_txt = loc.attrib.get("info", "")
 
-            display_parts = []
+            # Build "file:line:column" (omit missing parts)
+            parts = []
             if file_:
-                display_parts.append(file_)
+                parts.append(file_)
             if line:
-                display_parts.append(line)
+                parts.append(line)
             if col_:
-                display_parts.append(col_)
-            display_text = ":".join(display_parts)
+                parts.append(col_)
 
-            abs_path = os.path.abspath(os.path.join(xml_dir, file_)) if file_ else ""
+            pos_text = ":".join(parts) if parts else ""
+            info_text = f" - {info_txt}" if info_txt else ""
 
-            if abs_path:
-                abs_path_norm = abs_path.replace("\\", "/")
+            # Escape everything for HTML safety
+            locations_html.append(f"{html.escape(pos_text)}{html.escape(info_text)}")
 
-                if line:
-                    vscode_target = f"vscode://file/{abs_path_norm}:{line}"
-                    if col_:
-                        vscode_target += f":{col_}"
-                else:
-                    vscode_target = f"vscode://file/{abs_path_norm}"
-            else:
-                vscode_target = ""
-            link_text = html.escape(display_text) if display_text else html.escape(file_)
-            info_html = f" - {html.escape(info_txt)}" if info_txt else ""
-
-            if abs_path:
-                link_html = f'<a href="{html.escape(vscode_target)}">{link_text}</a>{info_html}'
-            else:
-                link_html = f"{link_text}{info_html}"
-
-            locations_html.append(link_html)
 
         loc_html = "<br>".join(locations_html)
         cells.append("<td>%s</td>" % loc_html)
@@ -287,7 +255,7 @@ tbody tr:hover td {
 <body>
 <h1>{title}</h1>
 <p class="meta"><strong>{meta_line}</strong></p>
-<p>Source file: <code>{html.escape(xml_path)}</code></p>
+<p>Source file: <code>{html.escape(str(xml_path))}</code></p>
 <table>
 <thead>{header_html}</thead>
 <tbody>{''.join(rows_html)}</tbody>
@@ -296,40 +264,41 @@ tbody tr:hover td {
 </html>
 """
 
-    html_path = os.path.splitext(xml_path)[0] + ".html"
-    Path(html_path).write_text(html_doc, encoding="utf-8")
+    html_path = xml_path.with_suffix(".html")
+    html_path.write_text(html_doc, encoding="utf-8")
 
-    cleaned = Path(html_path).read_text(encoding="utf-8").replace("\\011", " ").replace("\\342\\200\\246", "…")
-    Path(html_path).write_text(cleaned, encoding="utf-8")
+    cleaned = html_path.read_text(encoding="utf-8").replace("\\011", " ").replace("\\342\\200\\246", "…")
+    html_path.write_text(cleaned, encoding="utf-8")
 
     info(f"Generated: {html_path}")
 
     try:
-        os.remove(xml_path)
+        xml_path.unlink()
         info(f"Deleted source XML: {xml_path}")
     except Exception as e:
         warn(f"Could not delete {xml_path}: {e}")
 
-    return html_path
+    return str(html_path)
 
 
 def generate_cppcheck_html_reports(root_folder: Union[str, Path], misra_rules_path: Union[str, Path]) -> None:
-    root_folder = str(root_folder)
-    for dirpath, _, filenames in os.walk(root_folder):
-        for filename in filenames:
-            if filename in ("cppcheck_misra_results.mxl", "cppcheck_misra_results.xml"):
-                xml_path = os.path.join(dirpath, filename)
-                try:
-                    generate_html_for_cppcheck_xml(xml_path, misra_rules_path)
-                except Exception as e:
-                    error(f"Failed to process {xml_path}: {e}")
+    root = Path(root_folder).resolve()
+    for xml_path in root.rglob("*"):
+        if xml_path.is_file() and xml_path.name in ("cppcheck_misra_results.mxl", "cppcheck_misra_results.xml"):
+            try:
+                generate_html_for_cppcheck_xml(xml_path, misra_rules_path)
+            except Exception as e:
+                error(f"Failed to process {xml_path}: {e}")
 
 
 def scan_components(codebase_root: Path, template_content: str) -> list[Path]:
+    codebase_root = Path(codebase_root).resolve()
     info(f"Scanning for components under: {codebase_root}")
     created: list[Path] = []
 
     for target_dir in find_targets_with_subfolders(codebase_root, ("pltf", "cfg")):
+        target_dir = Path(target_dir)
+
         # ✅ Skip anything inside build directories
         if "build" in target_dir.parts:
             continue
@@ -359,21 +328,22 @@ def scan_components(codebase_root: Path, template_content: str) -> list[Path]:
 
 
 def build_and_run_docker(script_dir: Path) -> None:
+    script_dir = Path(script_dir).resolve()
     info("Building Docker image: cmake-misra-multi")
     run_cmd(["docker", "build", "-t", "cmake-misra-multi", "."], cwd=script_dir, check=True)
-    cwd = str(script_dir.resolve())
+
+    cwd = str(script_dir)
     info(f"Running analysis container with workspace: {cwd}")
     run_cmd(
-    [
-        "docker", "run", "--rm",
-        "-v", f"{cwd}:/workspace",
-        "cmake-misra-multi",
-        "bash", "-lc",
-        "run-clang-format-all.sh && build-and-check-all.sh"
-    ],
-    check=True,
+        [
+            "docker", "run", "--rm",
+            "-v", f"{cwd}:/workspace",
+            "cmake-misra-multi",
+            "bash", "-lc",
+            "run-clang-format-all.sh && build-and-check-all.sh"
+        ],
+        check=True,
     )
-
 
 
 def generate_reports(codebase_root: Path, misra_rules_path: Path) -> None:
@@ -395,6 +365,7 @@ def _cleanup_generated(created: list[Path]) -> None:
         except Exception as e:
             warn(f"Could not delete {cmake_path}: {e}")
 
+
 def move_file(src_folder: str | Path, filename: str, dst_folder: str | Path, *, overwrite: bool = True) -> Path:
     """
     Move `filename` from `src_folder` to `dst_folder`.
@@ -403,72 +374,138 @@ def move_file(src_folder: str | Path, filename: str, dst_folder: str | Path, *, 
     - If overwrite=False and destination exists -> raises FileExistsError
     - Returns the destination Path
     """
-    src_folder = Path(src_folder)
-    dst_folder = Path(dst_folder)
+    src_folder = Path(src_folder).resolve()
+    dst_folder = Path(dst_folder).resolve()
 
-    src_path = src_folder / filename
-    dst_path = dst_folder / filename
+    src_path = (src_folder / filename).resolve()
+    dst_folder.mkdir(parents=True, exist_ok=True)
+    dst_path = (dst_folder / filename).resolve()
 
     if not src_path.is_file():
         raise FileNotFoundError(f"Source file not found: {src_path}")
 
-    dst_folder.mkdir(parents=True, exist_ok=True)
-
     if dst_path.exists():
         if not overwrite:
             raise FileExistsError(f"Destination file already exists: {dst_path}")
-        # overwrite=True
         if dst_path.is_file():
             dst_path.unlink()
         else:
             raise IsADirectoryError(f"Destination exists and is not a file: {dst_path}")
 
-    # shutil.move works across disks too (copy+delete if needed)
     moved_to = shutil.move(str(src_path), str(dst_path))
     return Path(moved_to)
 
+
+# NOTE: This function is no longer used (we move only the workspace report).
+def copy_reports_to_folder(report_paths: list[Path], dest_folder: Path, *, base_root: Path | None = None) -> None:
+    """
+    Copy report files into dest_folder.
+
+    - Skips copy if src and dst are the same file
+    - Avoids overwriting by adding a suffix when filenames collide
+    - Optionally uses base_root to build a stable suffix from the report's relative path
+    """
+    dest_folder = Path(dest_folder).resolve()
+    dest_folder.mkdir(parents=True, exist_ok=True)
+
+    base_root_resolved = Path(base_root).resolve() if base_root else None
+
+    for p in report_paths:
+        src = Path(p).resolve()
+
+        # If the report is already inside dest_folder, copying would be pointless
+        # and may trigger SameFileError when src == dst.
+        try:
+            src.relative_to(dest_folder)
+            info(f"Skip (already in dest folder): {src}")
+            continue
+        except ValueError:
+            pass
+
+        # Choose destination name
+        dst_name = src.name
+        dst = (dest_folder / dst_name).resolve()
+
+        # If destination already exists, create a deterministic alternative name
+        if dst.exists():
+            suffix = ""
+            if base_root_resolved:
+                try:
+                    rel = src.relative_to(base_root_resolved).as_posix()
+                    # small stable suffix
+                    suffix = "_" + hex(abs(hash(rel)))[2:10]
+                except ValueError:
+                    suffix = "_dup"
+            else:
+                suffix = "_dup"
+
+            dst = (dest_folder / f"{src.stem}{suffix}{src.suffix}").resolve()
+
+            # Still colliding? add counter
+            i = 2
+            while dst.exists():
+                dst = (dest_folder / f"{src.stem}{suffix}_{i}{src.suffix}").resolve()
+                i += 1
+
+        # Final guard: skip if same file
+        try:
+            if src.exists() and dst.exists() and src.samefile(dst):
+                info(f"Skip (same file): {src}")
+                continue
+        except OSError:
+            # samefile can fail on some platforms / permissions; ignore
+            pass
+
+        shutil.copy2(src, dst)
+        info(f"Copied report: {src} -> {dst}")
+
+
+
 def main():
     script_dir = Path(__file__).resolve().parent
-    os.chdir(script_dir)
+    repo_root = script_dir.parent  # repo root / codebase_root
 
     preflight_check(
         script_dir=script_dir,
-        min_python=(3,8),
+        min_python=(3, 8),
         require_docker=True,
         check_docker_daemon=True,
-        #required_dirs=[(script_dir / 'code', 'Code directory')],
-        #required_files=[(script_dir / 'CMakeLists.txt', 'Template CMakeLists.txt')],
-        optional_files=[(MISRA_RULES_PATH, 'MISRA rules file')],
+        optional_files=[(MISRA_RULES_PATH, "MISRA rules file")],
     )
 
     template_path = script_dir / "CMakeLists.txt"
-    codebase_root = script_dir.parent
-    cfg_path = codebase_root / ".." / "cfg"
-    pltf_path = codebase_root / ".." / "pltf"
-    build_path = script_dir/"build"
-    cfg_path = cfg_path.resolve()
-    pltf_path = pltf_path.resolve()
-    build_path = build_path.resolve()
-    copy_folder(codebase_root, script_dir, "cfg")
-    copy_folder(codebase_root, script_dir, "pltf")
     template_content = template_path.read_text(encoding="utf-8", errors="replace")
-    misra_rules_path = MISRA_RULES_PATH
+
+    # Copy cfg/pltf from repo root into workspace (script_dir)
+    copy_into_workspace(repo_root / "cfg", script_dir, "cfg")
+    copy_into_workspace(repo_root / "pltf", script_dir, "pltf")
 
     created: list[Path] = []
     try:
-        created = scan_components(codebase_root, template_content)
+        created = scan_components(repo_root, template_content)
         build_and_run_docker(script_dir)
     except subprocess.CalledProcessError:
         fatal("Docker build/run failed. See error details above.")
-#    finally:
-#        _cleanup_generated(created)
 
-    generate_reports(codebase_root, misra_rules_path)
-    move_file(script_dir,"cppcheck_misra_results.html",codebase_root)
-    copy_folder(script_dir, codebase_root, "build")
+    # Generate HTML reports from XMLs under repo_root
+    generate_reports(repo_root, MISRA_RULES_PATH)
+
+    # Move ONLY the workspace report one level up (script_dir -> repo_root)
+    try:
+        moved = move_file(script_dir, "cppcheck_misra_results.html", repo_root, overwrite=True)
+        info(f"Moved report: {moved}")
+    except FileNotFoundError:
+        warn(f"Workspace report not found (nothing to move): {script_dir / 'cppcheck_misra_results.html'}")
+
+    # Copy build back to repo root (if it exists)
+    copy_into_workspace(script_dir / "build", repo_root, "build")
+
+    # Cleanup temporary cfg/pltf in workspace
     delete_cfg_and_pltf(script_dir)
+
     info("Done.")
 
 
 if __name__ == "__main__":
     main()
+

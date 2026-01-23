@@ -295,9 +295,104 @@ def delete_file(file_path: Path):
     except Exception as e:
         warn(f"Error deleting file '{file_path}': {e}")
 
+
+def move_file(src_file: Path, dest_file: Path):
+    """Move a single file or symlink to a destination path."""
+    if not src_file.exists():
+        warn(f"Source file does not exist: {src_file}")
+        return
+
+    if not (src_file.is_file() or src_file.is_symlink()):
+        warn(f"Source path is not a file: {src_file}")
+        return
+
+    try:
+        # Ensure destination directory exists
+        dest_file.parent.mkdir(parents=True, exist_ok=True)
+
+        shutil.move(str(src_file), str(dest_file))
+        info(f"File moved: {src_file} -> {dest_file}")
+
+    except Exception as e:
+        warn(f"Error moving file '{src_file}' to '{dest_file}': {e}")
+
+
+def copy_file(src_file: Path, dest_file: Path):
+    """Copy a single file or symlink to a destination path."""
+    if not src_file.exists():
+        warn(f"Source file does not exist: {src_file}")
+        return
+
+    if not (src_file.is_file() or src_file.is_symlink()):
+        warn(f"Source path is not a file: {src_file}")
+        return
+
+    try:
+        # Ensure destination directory exists
+        dest_file.parent.mkdir(parents=True, exist_ok=True)
+
+        shutil.copy2(src_file, dest_file)
+        info(f"File copied: {src_file} -> {dest_file}")
+
+    except Exception as e:
+        warn(f"Error copying file '{src_file}' to '{dest_file}': {e}")
+
+
 # -------------------------
 # Folder helpers
 # -------------------------
+
+
+def delete_folder(folder_path: Path) -> None:
+    """
+    Delete the entire folder (and all its contents).
+    If missing -> warn and return (no exception).
+    """
+    folder_path = Path(folder_path)
+
+    if not folder_path.exists():
+        warn(f"Folder does not exist: {folder_path}")
+        return
+
+    try:
+        shutil.rmtree(folder_path)
+        info(f"Folder deleted: {folder_path}")
+    except Exception as e:
+        warn(f"Error deleting folder '{folder_path}': {e}")
+
+
+def copy_entire_folder(src_folder: Path, dest_folder: Path, *, overwrite: bool = True) -> None:
+    """
+    Copy the entire src_folder directory into dest_folder.
+
+    - If src_folder is missing -> warn and return (no exception).
+    - If overwrite=True and dest_folder exists -> delete it first.
+    - If overwrite=False and dest_folder exists -> warn and return (no exception).
+    """
+    src_folder = Path(src_folder)
+    dest_folder = Path(dest_folder)
+
+    info(f"Copying folder '{src_folder}' -> '{dest_folder}'")
+
+    if not src_folder.is_dir():
+        warn(f"Source folder does not exist (or is not a directory): {src_folder}. Nothing to copy.")
+        return
+
+    if dest_folder.exists():
+        if not overwrite:
+            warn(f"Destination folder already exists and overwrite=False: {dest_folder}. Skipping copy.")
+            return
+        delete_folder(dest_folder)
+
+    # Ensure parent exists
+    dest_folder.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        shutil.copytree(src_folder, dest_folder)
+        info(f"Folder copied: {src_folder} -> {dest_folder}")
+    except Exception as e:
+        warn(f"Copy failed for '{src_folder}' -> '{dest_folder}': {e}")
+
 def clear_folder(folder_path: Path):
     """Delete all contents of folder_path (folder remains)."""
     if not folder_path.exists():

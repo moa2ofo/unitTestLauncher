@@ -18,7 +18,9 @@ from common_utils import (
     require_docker_running,
     run_cmd, docker_mount_path,
     preflight_check,
-    clear_folder
+    clear_folder,
+    copy_entire_folder,
+    copy_folder_contents
 )
 
 UNIT_TEST_PREFIX = "TEST_"
@@ -26,7 +28,7 @@ UNIT_TEST_PREFIX = "TEST_"
 SCRIPT_PATH = Path(__file__).resolve()
 PROJECT_ROOT = SCRIPT_PATH.parent.parent
 
-
+GIT_RESULT = PROJECT_ROOT/ "utUnderTest"
 UNIT_EXECUTION_FOLDER = SCRIPT_PATH.parent / "utExecutionAndResults" / "utUnderTest"
 UNIT_EXECUTION_FOLDER_BUILD = UNIT_EXECUTION_FOLDER / "build"
 UNIT_RESULT_FOLDER = SCRIPT_PATH.parent / "utExecutionAndResults" / "utResults"
@@ -100,34 +102,6 @@ class UnitModule:
 
 from pathlib import Path
 
-def move_ut_results(script_path: Path) -> None:
-    """
-    Move (copy + overwrite) the folder:
-        script_path.parent / "utExecutionAndResults" / "utResults"
-    into:
-        script_path.parent.parent / "utResults"
-
-    Uses:
-        clear_folder()
-        copy_folder_contents()
-    """
-
-    src = script_path.parent / "utExecutionAndResults" / "utResults"
-    dst = script_path.parent.parent / "utResults"
-
-    # If source doesn't exist, nothing to do
-    if not src.exists():
-        warn(f"Source folder does not exist: {src}")
-        return
-
-    # Ensure destination folder exists, then clear it
-    dst.mkdir(parents=True, exist_ok=True)
-    clear_folder(dst)
-
-    # Copy contents from src → dst
-    copy_folder_contents(src, dst)
-
-    info(f"utResults moved to: {dst}")
 
 
 def find_function_definition(root: Path, func_name: str):
@@ -275,25 +249,6 @@ def extract_function_name(path_str: str) -> str:
     if name_no_ext.startswith(UNIT_TEST_PREFIX):
         return name_no_ext[len(UNIT_TEST_PREFIX):]
     return name_no_ext
-
-
-def copy_folder_contents(src_folder: Path, dest_folder: Path):
-    info(f"Copying from '{src_folder}' to '{dest_folder}'")
-    if not src_folder.exists():
-        warn(f"Source folder does not exist: '{src_folder}'. Nothing to copy.")
-        return
-
-    dest_folder.mkdir(parents=True, exist_ok=True)
-
-    for item in src_folder.iterdir():
-        dest_path = dest_folder / item.name
-        try:
-            if item.is_dir():
-                shutil.copytree(item, dest_path, dirs_exist_ok=True)
-            else:
-                shutil.copy2(item, dest_path)
-        except Exception as e:
-            warn(f"Copy failed for '{item}': {e}")
 
 
 
@@ -597,7 +552,7 @@ if __name__ == "__main__":
     if sys.argv[1] in ("-h", "--help", "help"):
         print_help()
         sys.exit(0)
-    
+    clear_folder(GIT_RESULT)
     clear_folder(UNIT_EXECUTION_FOLDER)
     clear_folder(UNIT_RESULT_FOLDER)
 
@@ -624,7 +579,9 @@ if __name__ == "__main__":
             fatal(f"Unit test failed for '{unit_to_test}'. See error details above.")
 
     format_total_result_report(UNIT_RESULT_FOLDER)
-    move_ut_results(SCRIPT_PATH)
+
+    copy_entire_folder(UNIT_RESULT_FOLDER,GIT_RESULT)
+
     clear_folder(UNIT_EXECUTION_FOLDER)
     clear_folder(UNIT_RESULT_FOLDER)
     info("Done.")

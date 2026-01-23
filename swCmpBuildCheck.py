@@ -20,6 +20,11 @@ from common_utils import (
     run_cmd,
     find_targets_with_subfolders,
     preflight_check,
+    copy_entire_folder,
+    delete_folder,
+    delete_file,
+    move_file
+
 )
 
 # Default MISRA rules file path (adjust if needed)
@@ -479,9 +484,12 @@ def main():
     template_content = template_path.read_text(encoding="utf-8", errors="replace")
 
     # Copy cfg/pltf from repo root into workspace (script_dir)
-    copy_into_workspace(repo_root / "cfg", script_dir, "cfg")
-    copy_into_workspace(repo_root / "pltf", script_dir, "pltf")
-
+    delete_folder(script_dir/"build")
+    delete_folder(repo_root/"build")
+    delete_file(script_dir/"cppcheck_misra_results.html")
+    delete_file(repo_root/"cppcheck_misra_results.html")
+    copy_entire_folder(repo_root /"cfg", script_dir/ "cfg",overwrite=True)
+    copy_entire_folder(repo_root / "pltf", script_dir/ "pltf",overwrite=True)
     created: list[Path] = []
     try:
         created = scan_components(repo_root, template_content)
@@ -492,19 +500,16 @@ def main():
     # Generate HTML reports from XMLs under repo_root
     generate_reports(repo_root, MISRA_RULES_PATH)
 
-    # Move the newest report generated inside the workspace (script_dir tree) one level up
-    try:
-        moved = move_latest_report(script_dir, "cppcheck_misra_results.html", repo_root, overwrite=True)
-        info(f"Moved report: {moved}")
-    except FileNotFoundError as e:
-        warn(str(e))
+
+    move_file(script_dir/"cppcheck_misra_results.html", repo_root/"cppcheck_misra_results.html")
 
     # Copy build back to repo root (if it exists)
-    copy_into_workspace(script_dir / "build", repo_root, "build")
+
+    copy_entire_folder(script_dir / "build", repo_root/ "build",overwrite=True)
 
     # Cleanup temporary cfg/pltf in workspace
-    delete_cfg_and_pltf(script_dir)
-
+    delete_folder(script_dir/ "cfg")
+    delete_folder(script_dir/ "pltf")
     info("Done.")
 
 

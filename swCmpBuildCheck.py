@@ -500,13 +500,6 @@ def main():
     # Generate HTML reports from XMLs under repo_root
     generate_reports(repo_root, MISRA_RULES_PATH)
 
-
-    move_file(script_dir/"cppcheck_misra_results.html", repo_root/"cppcheck_misra_results.html")
-
-    # Copy build back to repo root (if it exists)
-
-    copy_entire_folder(script_dir / "build", repo_root/ "build",overwrite=True)
-
     # Cleanup temporary cfg/pltf in workspace
     delete_folder(script_dir/ "cfg")
     delete_folder(script_dir/ "pltf")

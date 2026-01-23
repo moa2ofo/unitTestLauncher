@@ -582,6 +582,4 @@ if __name__ == "__main__":
 
     copy_entire_folder(UNIT_RESULT_FOLDER,GIT_RESULT)
 
-    clear_folder(UNIT_EXECUTION_FOLDER)
-    clear_folder(UNIT_RESULT_FOLDER)
     info("Done.")

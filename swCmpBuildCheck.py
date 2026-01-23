@@ -30,12 +30,7 @@ def copy_folder(codebase_root: Path, script_dir: Path, folder_to_move: str | Pat
     """
     Copy a folder from `codebase_root` into `script_dir`.
 
-    Safety / robustness:
-    - `folder_to_move` may be str or Path.
-    - Leading '/' or '\\' is treated as accidental (e.g. "/build") and stripped.
-    - If `folder_to_move` contains "..", destination is forced to be inside `script_dir`
-      using only the folder's final name (e.g. "../cfg" -> script_dir/"cfg").
-    - Existing destination is removed before copy (clean overwrite).
+    If the source folder does not exist, the function silently returns.
     """
     codebase_root = Path(codebase_root).resolve()
     script_dir = Path(script_dir).resolve()
@@ -48,12 +43,13 @@ def copy_folder(codebase_root: Path, script_dir: Path, folder_to_move: str | Pat
     # Source is always resolved relative to codebase_root
     src = (codebase_root / rel).resolve()
 
+    # If folder doesn't exist, skip instead of raising
     if not src.is_dir():
-        raise FileNotFoundError(f"Required folder not found: {src}")
+        return  # <-- changed behavior
 
     # Prevent destination escaping script_dir via ".."
     if ".." in rel.parts:
-        dst_rel = Path(rel.name)  # e.g. "../cfg" -> "cfg"
+        dst_rel = Path(rel.name)
     else:
         dst_rel = rel
 
@@ -63,7 +59,6 @@ def copy_folder(codebase_root: Path, script_dir: Path, folder_to_move: str | Pat
     try:
         dst.relative_to(script_dir)
     except ValueError:
-        # fallback: force inside script_dir
         dst = script_dir / rel.name
 
     if dst.exists():

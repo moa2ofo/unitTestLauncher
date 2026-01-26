@@ -133,43 +133,10 @@ echo "All projects under ${ROOT_DIR} processed." >&2
 EOF
 RUN chmod +x /usr/local/bin/build-and-check-all.sh
 
-RUN cat <<'EOF' > /usr/local/bin/run-clang-format-all.sh
-#!/usr/bin/env bash
-set -euo pipefail
 
-ROOT_DIR="/workspace"
 
-if [[ ! -d "${ROOT_DIR}" ]]; then
-  echo "ERROR: Expected directory does not exist: ${ROOT_DIR}" >&2
-  exit 1
-fi
 
-if [[ ! -f "${ROOT_DIR}/.clang-format" ]]; then
-  cat <<'YAML' > "${ROOT_DIR}/.clang-format"
-BasedOnStyle: LLVM
-IndentWidth: 2
-UseTab: Never
-BreakBeforeBraces: Attach
-AllowShortIfStatementsOnASingleLine: true
-AllowShortBlocksOnASingleLine: true
-AllowShortFunctionsOnASingleLine: All
-AllowShortLoopsOnASingleLine: true
-ColumnLimit: 200
-SpaceBeforeParens: Never
-YAML
-fi
-
-echo "Running clang-format recursively under ${ROOT_DIR}..." >&2
-
-find "${ROOT_DIR}" -type f \( \
-  -name '*.c' -o -name '*.h' -o -name '*.cpp' -o -name '*.hpp' -o \
-  -name '*.cc' -o -name '*.hh' -o -name '*.cxx' -o -name '*.hxx' \
-\) -print0 | xargs -0 clang-format -i
-
-echo "clang-format completed." >&2
-EOF
-RUN chmod +x /usr/local/bin/run-clang-format-all.sh
 
 RUN find /usr/local/bin -type f -exec sed -i 's/\r$//' {} \;
 
-CMD ["run-clang-format-all.sh"]
+

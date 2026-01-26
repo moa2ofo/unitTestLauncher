@@ -119,19 +119,6 @@ def load_misra_rules(misra_rules_path: Union[str, Path]) -> Dict[str, str]:
 MISRA_ID_REGEX = re.compile(r"misra-c2012-(\d+\.\d+)")
 
 
-def delete_cfg_and_pltf(script_dir: Path) -> None:
-    """
-    Delete folders 'cfg' and 'pltf' from script_dir if they exist.
-    Safe if folders are missing.
-    """
-    script_dir = Path(script_dir).resolve()
-    for name in ("cfg", "pltf"):
-        target = (script_dir / name).resolve()
-
-        if target.is_dir():
-            shutil.rmtree(target)
-        elif target.exists():
-            target.unlink()
 
 
 def generate_html_for_cppcheck_xml(xml_path: Union[str, Path], misra_rules_path: Union[str, Path]) -> str:
@@ -356,118 +343,6 @@ def generate_reports(codebase_root: Path, misra_rules_path: Path) -> None:
     generate_cppcheck_html_reports(codebase_root, misra_rules_path)
 
 
-def _cleanup_generated(created: list[Path]) -> None:
-    if not created:
-        info("No generated CMakeLists.txt to clean up.")
-        return
-    info("Cleaning up generated CMakeLists.txt files...")
-    for cmake_path in created:
-        try:
-            cmake_path.unlink()
-            info(f"Removed {cmake_path}")
-        except FileNotFoundError:
-            warn(f"Already removed: {cmake_path}")
-        except Exception as e:
-            warn(f"Could not delete {cmake_path}: {e}")
-
-
-def move_latest_report(workspace: Path, filename: str, dest_folder: Path, *, overwrite: bool = True) -> Path:
-    """
-    Find all `filename` under `workspace` recursively, pick the most recently modified,
-    and move it into `dest_folder/filename`.
-    """
-    workspace = Path(workspace).resolve()
-    dest_folder = Path(dest_folder).resolve()
-    dest_folder.mkdir(parents=True, exist_ok=True)
-
-    candidates = list(workspace.rglob(filename))
-    candidates = [p for p in candidates if p.is_file()]
-
-    if not candidates:
-        raise FileNotFoundError(f"No '{filename}' found under: {workspace}")
-
-    # Pick newest by modification time
-    src_path = max(candidates, key=lambda p: p.stat().st_mtime)
-    dst_path = (dest_folder / filename).resolve()
-
-    if dst_path.exists():
-        if not overwrite:
-            raise FileExistsError(f"Destination file already exists: {dst_path}")
-        if dst_path.is_file():
-            dst_path.unlink()
-        else:
-            raise IsADirectoryError(f"Destination exists and is not a file: {dst_path}")
-
-    moved_to = shutil.move(str(src_path), str(dst_path))
-    return Path(moved_to)
-
-
-
-# NOTE: This function is no longer used (we move only the workspace report).
-def copy_reports_to_folder(report_paths: list[Path], dest_folder: Path, *, base_root: Path | None = None) -> None:
-    """
-    Copy report files into dest_folder.
-
-    - Skips copy if src and dst are the same file
-    - Avoids overwriting by adding a suffix when filenames collide
-    - Optionally uses base_root to build a stable suffix from the report's relative path
-    """
-    dest_folder = Path(dest_folder).resolve()
-    dest_folder.mkdir(parents=True, exist_ok=True)
-
-    base_root_resolved = Path(base_root).resolve() if base_root else None
-
-    for p in report_paths:
-        src = Path(p).resolve()
-
-        # If the report is already inside dest_folder, copying would be pointless
-        # and may trigger SameFileError when src == dst.
-        try:
-            src.relative_to(dest_folder)
-            info(f"Skip (already in dest folder): {src}")
-            continue
-        except ValueError:
-            pass
-
-        # Choose destination name
-        dst_name = src.name
-        dst = (dest_folder / dst_name).resolve()
-
-        # If destination already exists, create a deterministic alternative name
-        if dst.exists():
-            suffix = ""
-            if base_root_resolved:
-                try:
-                    rel = src.relative_to(base_root_resolved).as_posix()
-                    # small stable suffix
-                    suffix = "_" + hex(abs(hash(rel)))[2:10]
-                except ValueError:
-                    suffix = "_dup"
-            else:
-                suffix = "_dup"
-
-            dst = (dest_folder / f"{src.stem}{suffix}{src.suffix}").resolve()
-
-            # Still colliding? add counter
-            i = 2
-            while dst.exists():
-                dst = (dest_folder / f"{src.stem}{suffix}_{i}{src.suffix}").resolve()
-                i += 1
-
-        # Final guard: skip if same file
-        try:
-            if src.exists() and dst.exists() and src.samefile(dst):
-                info(f"Skip (same file): {src}")
-                continue
-        except OSError:
-            # samefile can fail on some platforms / permissions; ignore
-            pass
-
-        shutil.copy2(src, dst)
-        info(f"Copied report: {src} -> {dst}")
-
-
-
 def main():
     script_dir = Path(__file__).resolve().parent
     repo_root = script_dir.parent  # repo root / codebase_root
@@ -499,6 +374,13 @@ def main():
 
     # Generate HTML reports from XMLs under repo_root
     generate_reports(repo_root, MISRA_RULES_PATH)
+
+
+    move_file(script_dir/"cppcheck_misra_results.html", repo_root/"cppcheck_misra_results.html")
+
+    # Copy build back to repo root (if it exists)
+
+    copy_entire_folder(script_dir / "build", repo_root/ "build",overwrite=True)
 
     # Cleanup temporary cfg/pltf in workspace
     delete_folder(script_dir/ "cfg")

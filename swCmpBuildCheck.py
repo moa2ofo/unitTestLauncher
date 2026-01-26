@@ -345,7 +345,7 @@ def build_and_run_docker(script_dir: Path) -> None:
             "-v", f"{cwd}:/workspace",
             "cmake-misra-multi",
             "bash", "-lc",
-            "run-clang-format-all.sh && build-and-check-all.sh"
+            "build-and-check-all.sh"
         ],
         check=True,
     )

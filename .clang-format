@@ -8,3 +8,7 @@ AllowShortFunctionsOnASingleLine: All
 AllowShortLoopsOnASingleLine: true
 ColumnLimit: 200
 SpaceBeforeParens: Never
+
+# --- prevent comment wrapping/reflow ---
+ReflowComments: false
+CommentPragmas: '^/\*\*|\s*\*|^///|^//'

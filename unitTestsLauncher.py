@@ -28,7 +28,7 @@ UNIT_TEST_PREFIX = "TEST_"
 SCRIPT_PATH = Path(__file__).resolve()
 PROJECT_ROOT = SCRIPT_PATH.parent.parent
 
-GIT_RESULT = PROJECT_ROOT/ "utUnderTest"
+GIT_RESULT = PROJECT_ROOT/ "UnitTestResults"
 UNIT_EXECUTION_FOLDER = SCRIPT_PATH.parent / "utExecutionAndResults" / "utUnderTest"
 UNIT_EXECUTION_FOLDER_BUILD = UNIT_EXECUTION_FOLDER / "build"
 UNIT_RESULT_FOLDER = SCRIPT_PATH.parent / "utExecutionAndResults" / "utResults"
@@ -582,5 +582,5 @@ if __name__ == "__main__":
 
     copy_entire_folder(UNIT_RESULT_FOLDER,GIT_RESULT)
     clear_folder(UNIT_EXECUTION_FOLDER)
-    #clear_folder(UNIT_RESULT_FOLDER)
+    clear_folder(UNIT_RESULT_FOLDER)
     info("Done.")

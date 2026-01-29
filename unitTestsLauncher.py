@@ -37,6 +37,7 @@ RESULT_REPORT = "total_result_report.txt"
 DOCKER_MOUNT = docker_mount_path(SCRIPT_PATH.parent)
 
 DOCKER_BASE = [
+    "sudo",
     "docker",
     "run",
     "-it",

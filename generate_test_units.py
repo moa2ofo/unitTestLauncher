@@ -1,0 +1,349 @@
+
+#!/usr/bin/env python3
+import argparse
+import re
+from pathlib import Path
+from typing import Dict, List, Set, Tuple
+
+from clang.cindex import Index, Cursor, CursorKind, StorageClass, TypeKind
+
+
+def read_text(p: Path) -> str:
+    return p.read_text(encoding="utf-8", errors="ignore")
+
+
+def write_text(p: Path, s: str):
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(s, encoding="utf-8")
+
+
+# --- exclude generated TEST_* folders from the scan ---
+def _is_in_test_dir(p: Path) -> bool:
+    return any(part.startswith("TEST_") for part in p.parts)
+
+
+def list_headers(root: Path) -> List[Path]:
+    return sorted([p for p in root.rglob("*.h") if p.is_file() and not _is_in_test_dir(p)])
+
+
+def list_c_files(root: Path) -> List[Path]:
+    return sorted([p for p in root.rglob("*.c") if p.is_file() and not _is_in_test_dir(p)])
+
+
+def text_from_extent(ext) -> str:
+    src_path = Path(ext.start.file.name)
+    src = read_text(src_path)
+    lines = src.splitlines(keepends=True)
+
+    def idx(loc):
+        li = loc.line - 1
+        ci = loc.column - 1
+        return sum(len(lines[i]) for i in range(li)) + ci
+
+    start = idx(ext.start)
+    end = idx(ext.end)
+    return src[start:end]
+
+
+def function_prototype(fn: Cursor) -> str:
+    ret = fn.result_type.spelling if fn.result_type else "void"
+    params = []
+    for p in fn.get_arguments():
+        t = p.type.spelling
+        name = p.spelling or "param"
+        params.append(f"{t} {name}")
+    if fn.type.kind == TypeKind.FUNCTIONPROTO and fn.type.is_function_variadic():
+        params.append("...")
+    param_str = ", ".join(params) if params else "void"
+    return f"{ret} {fn.spelling}({param_str});"
+
+
+def collect_tu_globals(tu_cursor: Cursor) -> Dict[str, Cursor]:
+    out = {}
+    for c in tu_cursor.get_children():
+        if c.kind == CursorKind.VAR_DECL and c.semantic_parent.kind == CursorKind.TRANSLATION_UNIT:
+            usr = c.get_usr() or f"{c.spelling}@{c.location.file}:{c.location.line}"
+            out[usr] = c
+    return out
+
+
+def classify_var(ref: Cursor) -> Tuple[bool, bool]:
+    if ref is None or ref.kind != CursorKind.VAR_DECL:
+        return (False, False)
+    if ref.semantic_parent and ref.semantic_parent.kind == CursorKind.TRANSLATION_UNIT:
+        is_static = (ref.storage_class == StorageClass.STATIC)
+        return (True, is_static)
+    return (False, False)
+
+
+def analyze_function(fn: Cursor, tu_globals: Dict[str, Cursor]):
+    calls: Set[str] = set()
+    used_globals: Set[str] = set()
+    used_static: Set[str] = set()
+
+    def walk(n: Cursor):
+        if n.kind == CursorKind.CALL_EXPR:
+            tgt = None
+            for ch in n.get_children():
+                if hasattr(ch, "referenced") and ch.referenced:
+                    tgt = ch.referenced
+                    break
+            if tgt and tgt.kind == CursorKind.FUNCTION_DECL and tgt.spelling:
+                calls.add(tgt.spelling)
+
+        if n.kind == CursorKind.DECL_REF_EXPR and n.referenced:
+            ref = n.referenced
+            is_glob, is_stat = classify_var(ref)
+            if is_glob:
+                usr = ref.get_usr() or f"{ref.spelling}@{ref.location.file}:{ref.location.line}"
+                if usr in tu_globals:
+                    if is_stat:
+                        used_static.add(usr)
+                    else:
+                        used_globals.add(usr)
+
+        for ch in n.get_children():
+            walk(ch)
+
+    for ch in fn.get_children():
+        if ch.kind == CursorKind.COMPOUND_STMT:
+            walk(ch)
+
+    return calls, used_globals, used_static
+
+
+def remove_function_proto_from_header(text: str, func_name: str) -> str:
+    pattern = re.compile(
+        r'(^|\n)\s*([A-Za-z_][\w\s\*\(\),\[\]:]+?\s+)?'
+        + re.escape(func_name)
+        + r'\s*\([^;{]*\)\s*;\s*(?=\n|$)',
+        re.DOTALL,
+    )
+    return re.sub(pattern, r"\1", text)
+
+
+# -------------------------
+# Robust static wrappers
+# -------------------------
+def is_const_qualified(t) -> bool:
+    try:
+        return bool(t.is_const_qualified())
+    except Exception:
+        return False
+
+
+def is_array_type(t) -> bool:
+    return t.kind in (
+        TypeKind.CONSTANTARRAY,
+        TypeKind.INCOMPLETEARRAY,
+        TypeKind.VARIABLEARRAY,
+        TypeKind.DEPENDENTSIZEDARRAY,
+    )
+
+
+def array_elem_type_spelling(t) -> str:
+    return t.element_type.spelling
+
+
+def array_count_or_none(t):
+    try:
+        if t.kind == TypeKind.CONSTANTARRAY:
+            return int(t.element_count)
+    except Exception:
+        pass
+    return None
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("root")
+    args, _unknown = ap.parse_known_args()
+
+    root = Path(args.root).resolve()
+    clang_args = ["-std=c11", f"-I{root}", "-I."]
+
+    index = Index.create()
+    headers_all = list_headers(root)
+
+    for c_path in list_c_files(root):
+        tu = index.parse(str(c_path), args=clang_args)
+        tu_globals = collect_tu_globals(tu.cursor)
+
+        for fn in tu.cursor.get_children():
+            if fn.kind == CursorKind.FUNCTION_DECL and fn.is_definition():
+                if Path(str(fn.location.file)).resolve() != c_path:
+                    continue
+
+                fn_name = fn.spelling
+
+                # NEW structure:
+                # <root>/TEST_<fn_name>/src/...
+                # <root>/TEST_<fn_name>/test/test_<fn_name>.c
+                test_pkg_dir = root / f"TEST_{fn_name}"
+                src_dir = test_pkg_dir / "src"
+                test_dir = test_pkg_dir / "test"
+                src_dir.mkdir(parents=True, exist_ok=True)
+                test_dir.mkdir(parents=True, exist_ok=True)
+
+                _calls, used_glob_usr, used_stat_usr = analyze_function(fn, tu_globals)
+                fn_text = text_from_extent(fn.extent)
+                proto = function_prototype(fn)
+
+                # Pre-scan static vars for optional std includes in generated header
+                need_stddef = False
+                need_string = False
+                for usr in used_stat_usr:
+                    v = tu_globals[usr]
+                    t = v.type
+                    if is_array_type(t):
+                        need_stddef = True
+                        if (not is_const_qualified(t)) and (array_count_or_none(t) is not None):
+                            need_string = True
+
+                # ---- src/<fn_name>.h ----
+                header_lines = [
+                    f"#ifndef TEST_{fn_name.upper()}_H",
+                    f"#define TEST_{fn_name.upper()}_H",
+                    "",
+                ]
+                for h in headers_all:
+                    header_lines.append(f'#include "{h.name}"')
+                header_lines.append("")
+
+                if need_stddef:
+                    header_lines.append("#include <stddef.h>")
+                if need_string:
+                    header_lines.append("#include <string.h>")
+                if need_stddef or need_string:
+                    header_lines.append("")
+
+                header_lines.append(proto)
+
+                # robust wrappers for static globals
+                for usr in sorted(used_stat_usr):
+                    v = tu_globals[usr]
+                    t = v.type
+                    vname = v.spelling
+
+                    v_is_const = is_const_qualified(t)
+                    v_is_array = is_array_type(t)
+
+                    if v_is_array:
+                        elem_t = array_elem_type_spelling(t)
+                        cnt = array_count_or_none(t)
+
+                        if v_is_const:
+                            header_lines.append(f"const {elem_t}* get_{vname}_ptr(void);")
+                        else:
+                            header_lines.append(f"{elem_t}* get_{vname}_ptr(void);")
+
+                        header_lines.append(f"size_t get_{vname}_size(void);")
+
+                        if (not v_is_const) and (cnt is not None):
+                            header_lines.append(f"void set_{vname}(const {elem_t}* src, size_t n);")
+                    else:
+                        tname = t.spelling
+                        header_lines.append(f"{tname} get_{vname}(void);")
+                        if not v_is_const:
+                            header_lines.append(f"void set_{vname}({tname} val);")
+
+                header_lines.append("")
+                header_lines.append(f"#endif /* TEST_{fn_name.upper()}_H */\n")
+                write_text(src_dir / f"{fn_name}.h", "\n".join(header_lines))
+
+                # ---- src/<fn_name>.c ----
+                impl_lines = [
+                    f'#include "{fn_name}.h"',
+                    "#include <stddef.h>",
+                    "#include <string.h>",
+                    "",
+                ]
+
+                if used_glob_usr:
+                    impl_lines.append("/* globals used (real definitions) */")
+                    for usr in sorted(used_glob_usr):
+                        v = tu_globals[usr]
+                        orig = text_from_extent(v.extent).strip()
+                        impl_lines.append(orig + ";") if not orig.endswith(";") else impl_lines.append(orig)
+                    impl_lines.append("")
+
+                if used_stat_usr:
+                    impl_lines.append("/* static globals (copied) */")
+                    for usr in sorted(used_stat_usr):
+                        v = tu_globals[usr]
+                        t = v.type
+                        vname = v.spelling
+
+                        v_is_const = is_const_qualified(t)
+                        v_is_array = is_array_type(t)
+
+                        static_src = text_from_extent(v.extent).strip()
+                        impl_lines.append(static_src + ";") if not static_src.endswith(";") else impl_lines.append(static_src)
+
+                        if v_is_array:
+                            elem_t = array_elem_type_spelling(t)
+                            cnt = array_count_or_none(t)
+
+                            if v_is_const:
+                                impl_lines.append(f"const {elem_t}* get_{vname}_ptr(void) {{ return {vname}; }}")
+                            else:
+                                impl_lines.append(f"{elem_t}* get_{vname}_ptr(void) {{ return {vname}; }}")
+
+                            if cnt is not None:
+                                impl_lines.append(f"size_t get_{vname}_size(void) {{ return (size_t){cnt}; }}")
+                            else:
+                                impl_lines.append(f"size_t get_{vname}_size(void) {{ return (size_t)0; }}")
+
+                            if (not v_is_const) and (cnt is not None):
+                                impl_lines.append(
+                                    f"void set_{vname}(const {elem_t}* src, size_t n) {{\n"
+                                    f"    size_t m = (n < (size_t){cnt}) ? n : (size_t){cnt};\n"
+                                    f"    memcpy({vname}, src, m * sizeof({elem_t}));\n"
+                                    f"}}"
+                                )
+                        else:
+                            tname = t.spelling
+                            impl_lines.append(f"{tname} get_{vname}(void) {{ return {vname}; }}")
+                            if not v_is_const:
+                                impl_lines.append(f"void set_{vname}({tname} val) {{ {vname} = val; }}")
+
+                    impl_lines.append("")
+
+                impl_lines.append("/* original function */")
+                impl_lines.append(fn_text)
+                write_text(src_dir / f"{fn_name}.c", "\n".join(impl_lines))
+
+                # ---- copy cleaned headers into src/ ----
+                for h in headers_all:
+                    txt = read_text(h)
+                    cleaned = remove_function_proto_from_header(txt, fn_name)
+                    write_text(src_dir / h.name, cleaned)
+
+                # ---- test/test_<fn_name>.c (inside TEST_<fn_name>) ----
+                test_c_lines = [
+                    f'#include <{fn_name}.h>',
+                    '#include "unity.h"',
+                    "",
+                ]
+                for h in headers_all:
+                    test_c_lines.append(f'#include "mock_{h.name}"')
+
+                test_c_lines += [
+                    "",
+                    "void setUp(void) {}",
+                    "void tearDown(void) {}",
+                    "",
+                    f"void test_{fn_name}(void)",
+                    "{",
+                    '    TEST_IGNORE_MESSAGE("Auto-generated stub test");',
+                    "}",
+                    "",
+                ]
+
+                write_text(test_dir / f"test_{fn_name}.c", "\n".join(test_c_lines))
+
+                print(f"[OK] Generated TEST_{fn_name} (src/ + test/)")
+
+
+if __name__ == "__main__":
+    main()

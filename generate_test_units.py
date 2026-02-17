@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 import argparse
 import re
@@ -17,7 +16,6 @@ def write_text(p: Path, s: str):
     p.write_text(s, encoding="utf-8")
 
 
-# --- exclude generated TEST_* folders from the scan ---
 def _is_in_test_dir(p: Path) -> bool:
     return any(part.startswith("TEST_") for part in p.parts)
 
@@ -122,9 +120,6 @@ def remove_function_proto_from_header(text: str, func_name: str) -> str:
     return re.sub(pattern, r"\1", text)
 
 
-# -------------------------
-# Robust static wrappers
-# -------------------------
 def is_const_qualified(t) -> bool:
     try:
         return bool(t.is_const_qualified())
@@ -170,60 +165,127 @@ def main():
         tu_globals = collect_tu_globals(tu.cursor)
 
         for fn in tu.cursor.get_children():
-            if fn.kind == CursorKind.FUNCTION_DECL and fn.is_definition():
-                if Path(str(fn.location.file)).resolve() != c_path:
-                    continue
+            if fn.kind != CursorKind.FUNCTION_DECL or not fn.is_definition():
+                continue
+            if Path(str(fn.location.file)).resolve() != c_path:
+                continue
 
-                fn_name = fn.spelling
+            fn_name = fn.spelling
 
-                # NEW structure:
-                # <root>/TEST_<fn_name>/src/...
-                # <root>/TEST_<fn_name>/test/test_<fn_name>.c
-                test_pkg_dir = root / f"TEST_{fn_name}"
-                src_dir = test_pkg_dir / "src"
-                test_dir = test_pkg_dir / "test"
-                src_dir.mkdir(parents=True, exist_ok=True)
+            # TEST PACKAGE
+            test_pkg_dir = root / f"TEST_{fn_name}"
+            src_dir = test_pkg_dir / "src"
+            test_dir = test_pkg_dir / "test"
+
+            test_exists = test_pkg_dir.exists()
+            src_exists = src_dir.exists()
+            src_empty = (not src_exists) or (src_exists and not any(src_dir.iterdir()))
+
+            # CASE 3: TEST exists + src not empty -> skip
+            if src_exists and not src_empty:
+                print(f"[SKIP] TEST_{fn_name} exists and src/ not empty")
+                continue
+
+            # CASE 1: TEST missing → create src + test
+            if not test_exists:
                 test_dir.mkdir(parents=True, exist_ok=True)
 
-                _calls, used_glob_usr, used_stat_usr = analyze_function(fn, tu_globals)
-                fn_text = text_from_extent(fn.extent)
-                proto = function_prototype(fn)
+            # CASE 1 and CASE 2: recreate src content
+            src_dir.mkdir(parents=True, exist_ok=True)
 
-                # Pre-scan static vars for optional std includes in generated header
-                need_stddef = False
-                need_string = False
-                for usr in used_stat_usr:
-                    v = tu_globals[usr]
-                    t = v.type
-                    if is_array_type(t):
-                        need_stddef = True
-                        if (not is_const_qualified(t)) and (array_count_or_none(t) is not None):
-                            need_string = True
+            calls, used_glob_usr, used_stat_usr = analyze_function(fn, tu_globals)
+            fn_text = text_from_extent(fn.extent)
+            proto = function_prototype(fn)
 
-                # ---- src/<fn_name>.h ----
-                header_lines = [
-                    f"#ifndef TEST_{fn_name.upper()}_H",
-                    f"#define TEST_{fn_name.upper()}_H",
-                    "",
-                ]
-                for h in headers_all:
-                    header_lines.append(f'#include "{h.name}"')
+            need_stddef = False
+            need_string = False
+
+            for usr in used_stat_usr:
+                v = tu_globals[usr]
+                t = v.type
+                if is_array_type(t):
+                    need_stddef = True
+                    if not is_const_qualified(t) and array_count_or_none(t) is not None:
+                        need_string = True
+
+            # ================== src/<fn>.h ==================
+            header_lines = [
+                f"#ifndef TEST_{fn_name.upper()}_H",
+                f"#define TEST_{fn_name.upper()}_H",
+                "",
+            ]
+
+            for h in headers_all:
+                header_lines.append(f'#include "{h.name}"')
+            header_lines.append("")
+
+            if need_stddef:
+                header_lines.append("#include <stddef.h>")
+            if need_string:
+                header_lines.append("#include <string.h>")
+            if need_stddef or need_string:
                 header_lines.append("")
 
-                if need_stddef:
-                    header_lines.append("#include <stddef.h>")
-                if need_string:
-                    header_lines.append("#include <string.h>")
-                if need_stddef or need_string:
-                    header_lines.append("")
+            header_lines.append(proto)
 
-                header_lines.append(proto)
+            for usr in sorted(used_stat_usr):
+                v = tu_globals[usr]
+                t = v.type
+                vname = v.spelling
+                v_is_const = is_const_qualified(t)
+                v_is_array = is_array_type(t)
 
-                # robust wrappers for static globals
+                if v_is_array:
+                    elem_t = array_elem_type_spelling(t)
+                    cnt = array_count_or_none(t)
+
+                    header_lines.append(
+                        f"{'const ' if v_is_const else ''}{elem_t}* get_{vname}_ptr(void);"
+                    )
+                    header_lines.append(f"size_t get_{vname}_size(void);")
+
+                    if (not v_is_const) and (cnt is not None):
+                        header_lines.append(f"void set_{vname}(const {elem_t}* src, size_t n);")
+
+                else:
+                    tname = t.spelling
+                    header_lines.append(f"{tname} get_{vname}(void);")
+                    if not v_is_const:
+                        header_lines.append(f"void set_{vname}({tname} val);")
+
+            header_lines.append("")
+            header_lines.append(f"#endif /* TEST_{fn_name.upper()}_H */\n")
+
+            write_text(src_dir / f"{fn_name}.h", "\n".join(header_lines))
+
+            # ================== src/<fn>.c ==================
+            impl = [
+                f'#include "{fn_name}.h"',
+                "#include <stddef.h>",
+                "#include <string.h>",
+                "",
+            ]
+
+            if used_glob_usr:
+                impl.append("/* globals used (real definitions) */")
+                for usr in sorted(used_glob_usr):
+                    v = tu_globals[usr]
+                    orig = text_from_extent(v.extent).strip()
+                    if not orig.endswith(";"):
+                        orig += ";"
+                    impl.append(orig)
+                impl.append("")
+
+            if used_stat_usr:
+                impl.append("/* static globals (copied) */")
                 for usr in sorted(used_stat_usr):
                     v = tu_globals[usr]
                     t = v.type
                     vname = v.spelling
+                    static_src = text_from_extent(v.extent).strip()
+                    if not static_src.endswith(";"):
+                        static_src += ";"
+                    impl.append(static_src)
 
                     v_is_const = is_const_qualified(t)
                     v_is_array = is_array_type(t)
@@ -232,103 +294,55 @@ def main():
                         elem_t = array_elem_type_spelling(t)
                         cnt = array_count_or_none(t)
 
-                        if v_is_const:
-                            header_lines.append(f"const {elem_t}* get_{vname}_ptr(void);")
-                        else:
-                            header_lines.append(f"{elem_t}* get_{vname}_ptr(void);")
+                        impl.append(
+                            f"{'const ' if v_is_const else ''}{elem_t}* get_{vname}_ptr(void) {{ return {vname}; }}"
+                        )
 
-                        header_lines.append(f"size_t get_{vname}_size(void);")
+                        if cnt is not None:
+                            impl.append(
+                                f"size_t get_{vname}_size(void) {{ return (size_t){cnt}; }}"
+                            )
+                        else:
+                            impl.append("size_t get_{vname}_size(void) { return 0; }")
 
                         if (not v_is_const) and (cnt is not None):
-                            header_lines.append(f"void set_{vname}(const {elem_t}* src, size_t n);")
+                            impl.append(
+                                f"void set_{vname}(const {elem_t}* src, size_t n) {{\n"
+                                f"    size_t m = (n < (size_t){cnt}) ? n : (size_t){cnt};\n"
+                                f"    memcpy({vname}, src, m * sizeof({elem_t}));\n"
+                                f"}}"
+                            )
+
                     else:
                         tname = t.spelling
-                        header_lines.append(f"{tname} get_{vname}(void);")
+                        impl.append(f"{tname} get_{vname}(void) {{ return {vname}; }}")
                         if not v_is_const:
-                            header_lines.append(f"void set_{vname}({tname} val);")
+                            impl.append(f"void set_{vname}({tname} val) {{ {vname} = val; }}")
 
-                header_lines.append("")
-                header_lines.append(f"#endif /* TEST_{fn_name.upper()}_H */\n")
-                write_text(src_dir / f"{fn_name}.h", "\n".join(header_lines))
+                impl.append("")
 
-                # ---- src/<fn_name>.c ----
-                impl_lines = [
-                    f'#include "{fn_name}.h"',
-                    "#include <stddef.h>",
-                    "#include <string.h>",
-                    "",
-                ]
+            impl.append("/* FUNCTION TO TEST */")
+            impl.append(fn_text)
 
-                if used_glob_usr:
-                    impl_lines.append("/* globals used (real definitions) */")
-                    for usr in sorted(used_glob_usr):
-                        v = tu_globals[usr]
-                        orig = text_from_extent(v.extent).strip()
-                        impl_lines.append(orig + ";") if not orig.endswith(";") else impl_lines.append(orig)
-                    impl_lines.append("")
+            write_text(src_dir / f"{fn_name}.c", "\n".join(impl))
 
-                if used_stat_usr:
-                    impl_lines.append("/* static globals (copied) */")
-                    for usr in sorted(used_stat_usr):
-                        v = tu_globals[usr]
-                        t = v.type
-                        vname = v.spelling
+            # ================== copy cleaned headers ==================
+            for h in headers_all:
+                cleaned = remove_function_proto_from_header(read_text(h), fn_name)
+                write_text(src_dir / h.name, cleaned)
 
-                        v_is_const = is_const_qualified(t)
-                        v_is_array = is_array_type(t)
-
-                        static_src = text_from_extent(v.extent).strip()
-                        impl_lines.append(static_src + ";") if not static_src.endswith(";") else impl_lines.append(static_src)
-
-                        if v_is_array:
-                            elem_t = array_elem_type_spelling(t)
-                            cnt = array_count_or_none(t)
-
-                            if v_is_const:
-                                impl_lines.append(f"const {elem_t}* get_{vname}_ptr(void) {{ return {vname}; }}")
-                            else:
-                                impl_lines.append(f"{elem_t}* get_{vname}_ptr(void) {{ return {vname}; }}")
-
-                            if cnt is not None:
-                                impl_lines.append(f"size_t get_{vname}_size(void) {{ return (size_t){cnt}; }}")
-                            else:
-                                impl_lines.append(f"size_t get_{vname}_size(void) {{ return (size_t)0; }}")
-
-                            if (not v_is_const) and (cnt is not None):
-                                impl_lines.append(
-                                    f"void set_{vname}(const {elem_t}* src, size_t n) {{\n"
-                                    f"    size_t m = (n < (size_t){cnt}) ? n : (size_t){cnt};\n"
-                                    f"    memcpy({vname}, src, m * sizeof({elem_t}));\n"
-                                    f"}}"
-                                )
-                        else:
-                            tname = t.spelling
-                            impl_lines.append(f"{tname} get_{vname}(void) {{ return {vname}; }}")
-                            if not v_is_const:
-                                impl_lines.append(f"void set_{vname}({tname} val) {{ {vname} = val; }}")
-
-                    impl_lines.append("")
-
-                impl_lines.append("/* original function */")
-                impl_lines.append(fn_text)
-                write_text(src_dir / f"{fn_name}.c", "\n".join(impl_lines))
-
-                # ---- copy cleaned headers into src/ ----
-                for h in headers_all:
-                    txt = read_text(h)
-                    cleaned = remove_function_proto_from_header(txt, fn_name)
-                    write_text(src_dir / h.name, cleaned)
-
-                # ---- test/test_<fn_name>.c (inside TEST_<fn_name>) ----
-                test_c_lines = [
+            # ================== create test/<fn>.c only if test didn't exist ==================
+            if not test_exists:
+                test_c = [
                     f'#include <{fn_name}.h>',
                     '#include "unity.h"',
                     "",
                 ]
-                for h in headers_all:
-                    test_c_lines.append(f'#include "mock_{h.name}"')
 
-                test_c_lines += [
+                for h in headers_all:
+                    test_c.append(f'#include "mock_{h.name}"')
+
+                test_c += [
                     "",
                     "void setUp(void) {}",
                     "void tearDown(void) {}",
@@ -340,9 +354,9 @@ def main():
                     "",
                 ]
 
-                write_text(test_dir / f"test_{fn_name}.c", "\n".join(test_c_lines))
+                write_text(test_dir / f"test_{fn_name}.c", "\n".join(test_c))
 
-                print(f"[OK] Generated TEST_{fn_name} (src/ + test/)")
+            print(f"[OK] Generated TEST_{fn_name} (src regenerated)")
 
 
 if __name__ == "__main__":

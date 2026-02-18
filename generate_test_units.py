@@ -7,6 +7,8 @@ from typing import Dict, List, Set, Tuple
 from clang.cindex import Index, Cursor, CursorKind, StorageClass, TypeKind
 
 
+# ---------------------- FS helpers ----------------------
+
 def read_text(p: Path) -> str:
     return p.read_text(encoding="utf-8", errors="ignore")
 
@@ -20,13 +22,25 @@ def _is_in_test_dir(p: Path) -> bool:
     return any(part.startswith("TEST_") for part in p.parts)
 
 
-def list_headers(root: Path) -> List[Path]:
-    return sorted([p for p in root.rglob("*.h") if p.is_file() and not _is_in_test_dir(p)])
+# ---------------------- Discovery limited to ../pltf and ../cfg ----------------------
+
+def list_headers(roots: List[Path]) -> List[Path]:
+    out: List[Path] = []
+    for r in roots:
+        if r.is_dir():
+            out.extend([p for p in r.rglob("*.h") if p.is_file() and not _is_in_test_dir(p)])
+    return sorted(out)
 
 
-def list_c_files(root: Path) -> List[Path]:
-    return sorted([p for p in root.rglob("*.c") if p.is_file() and not _is_in_test_dir(p)])
+def list_c_files(roots: List[Path]) -> List[Path]:
+    out: List[Path] = []
+    for r in roots:
+        if r.is_dir():
+            out.extend([p for p in r.rglob("*.c") if p.is_file() and not _is_in_test_dir(p)])
+    return sorted(out)
 
+
+# ---------------------- Clang helpers ----------------------
 
 def text_from_extent(ext) -> str:
     src_path = Path(ext.start.file.name)
@@ -149,18 +163,36 @@ def array_count_or_none(t):
     return None
 
 
+# ---------------------- Main ----------------------
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("root")
-    args, _unknown = ap.parse_known_args()
+    ap.add_argument("root", help="workspace path (this script folder)")
+    # allow overriding output dir if needed
+    ap.add_argument("--out-root", default=None, help="path to /unitTest (default: sibling of root)")
+    # pass-through extra clang args after '--'
+    args, extra_clang = ap.parse_known_args()
 
-    root = Path(args.root).resolve()
-    clang_args = ["-std=c11", f"-I{root}", "-I."]
+    root = Path(args.root).resolve()         # e.g., /workspace
+    parent = root.parent                     # common parent of /workspace, /pltf, /cfg, /unitTest
+    out_root = Path(args.out_root).resolve() if args.out_root else (parent / "unitTest")
+
+    # Scan exactly ../pltf and ../cfg
+    scan_roots: List[Path] = [parent / "pltf", parent / "cfg"]
+
+    # Clang args: std + includes for ../pltf and ../cfg (+ local) + extras
+    clang_args: List[str] = ["-std=c11"]
+    for inc in scan_roots:
+        clang_args.append(f"-I{inc}")
+    clang_args.append("-I.")                 # local
+    clang_args.extend(extra_clang)           # pass-through
 
     index = Index.create()
-    headers_all = list_headers(root)
 
-    for c_path in list_c_files(root):
+    headers_all = list_headers(scan_roots)
+    c_files = list_c_files(scan_roots)
+
+    for c_path in c_files:
         tu = index.parse(str(c_path), args=clang_args)
         tu_globals = collect_tu_globals(tu.cursor)
 
@@ -172,8 +204,8 @@ def main():
 
             fn_name = fn.spelling
 
-            # TEST PACKAGE
-            test_pkg_dir = root / f"TEST_{fn_name}"
+            # TEST PACKAGE under ../unitTest
+            test_pkg_dir = out_root / f"TEST_{fn_name}"
             src_dir = test_pkg_dir / "src"
             test_dir = test_pkg_dir / "test"
 
@@ -193,7 +225,7 @@ def main():
             # CASE 1 and CASE 2: recreate src content
             src_dir.mkdir(parents=True, exist_ok=True)
 
-            calls, used_glob_usr, used_stat_usr = analyze_function(fn, tu_globals)
+            _calls, used_glob_usr, used_stat_usr = analyze_function(fn, tu_globals)
             fn_text = text_from_extent(fn.extent)
             proto = function_prototype(fn)
 
@@ -356,8 +388,7 @@ def main():
 
                 write_text(test_dir / f"test_{fn_name}.c", "\n".join(test_c))
 
-            print(f"[OK] Generated TEST_{fn_name} (src regenerated)")
-
+            print(f"[OK] Generated TEST_{fn_name} (src regenerated) -> {test_pkg_dir}")
 
 if __name__ == "__main__":
     main()

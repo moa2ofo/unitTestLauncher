@@ -5,7 +5,7 @@ import platform
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional   # <—— PATCH ADDED
+from typing import Optional
 
 IMG_TAG_DEFAULT = "llvm-c-parser:latest"
 WORKDIR_IN_CONTAINER = "/workspace"
@@ -23,7 +23,7 @@ def docker_available():
         return False
 
 
-def build_image(tag: str, context: str = ".", dockerfile: Optional[str] = None):  # <—— PATCH APPLIED
+def build_image(tag: str, context: str = ".", dockerfile: Optional[str] = None):
     cmd = ["docker", "build", "-t", tag]
     if dockerfile:
         cmd += ["-f", dockerfile]
@@ -39,10 +39,10 @@ def docker_run(tag: str, cmd: str, host_dir: str, interactive: bool = False):
         "-v", f"{host_dir}:{WORKDIR_IN_CONTAINER}"
     ]
 
+    # Only add -it when interactive=True
     if interactive:
         args.append("-it")
 
-    # IMPORTANTISSIMO: niente "--" dopo -lc
     args += [tag, "bash", "-lc", cmd]
 
     print(f"[RUN] {' '.join(args)}")
@@ -55,7 +55,7 @@ def main():
 
     sub = parser.add_subparsers(dest="action")
 
-    # testgen: esegue generate_test_units.py dentro docker senza problemi di --
+    # testgen: generate_test_units.py inside Docker
     p_testgen = sub.add_parser("testgen")
     p_testgen.add_argument("root", help="cartella progetto")
     p_testgen.add_argument("--tag", default=IMG_TAG_DEFAULT)
@@ -69,12 +69,12 @@ def main():
     p_build.add_argument("--context", default=".")
     p_build.add_argument("--file", help="Dockerfile path/name", default=None)
 
-    # bash
+    # bash interactive
     p_bash = sub.add_parser("bash")
     p_bash.add_argument("--tag", default=IMG_TAG_DEFAULT)
     p_bash.add_argument("--host-dir", default=str(Path.cwd()))
 
-    # cmd (pass-through completo)
+    # cmd (pass-through)
     p_cmd = sub.add_parser("cmd")
     p_cmd.add_argument("--tag", default=IMG_TAG_DEFAULT)
     p_cmd.add_argument("--host-dir", default=str(Path.cwd()))
@@ -117,6 +117,7 @@ def main():
         return
 
     if args.action == "bash":
+        # ONLY this is interactive
         docker_run(args.tag, "bash", args.host_dir, interactive=True)
         return
 
@@ -125,8 +126,6 @@ def main():
             print("Uso: python run_docker.py cmd -- <comando>")
             sys.exit(2)
 
-        # FIX QUI:
-        # Rimuove automaticamente un eventuale "--" iniziale
         cmd_tokens = list(args.command)
         if cmd_tokens and cmd_tokens[0] == "--":
             cmd_tokens = cmd_tokens[1:]
@@ -136,7 +135,9 @@ def main():
             sys.exit(2)
 
         full_cmd = " ".join(cmd_tokens)
-        docker_run(args.tag, full_cmd, args.host_dir, interactive=True)
+
+        # FIX: NON‑INTERACTIVE IN CI
+        docker_run(args.tag, full_cmd, args.host_dir, interactive=False)
         return
 
     if args.action == "clang-ast":
@@ -149,22 +150,20 @@ def main():
     if args.action == "libclang-ast":
         incs = " ".join(f'-I"{p}"' for p in args.includes)
         defs = " ".join(f'-D{d}' for d in args.defines)
-
         cmd = f'python3 "{args.script}" "{args.file}" -- -std={args.std} {incs} {defs}'
         docker_run(args.tag, cmd, args.host_dir, interactive=False)
         return
 
     if args.action == "testgen":
-        # Rimuovi eventuale "--" iniziale
         clang_args = list(args.clang_args)
         if clang_args and clang_args[0] == "--":
             clang_args = clang_args[1:]
 
-        # Prepara la riga di comando dentro Docker
         clang_str = " ".join(clang_args)
         cmd = f'python3 "{args.script}" "{args.root}" -- {clang_str}'
 
-        docker_run(args.tag, cmd, args.host_dir, interactive=True)
+        # FIX: NON‑INTERACTIVE IN CI
+        docker_run(args.tag, cmd, args.host_dir, interactive=False)
         return
 
     parser.print_help()

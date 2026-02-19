@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import argparse
 import re
 from pathlib import Path
@@ -163,6 +162,63 @@ def array_count_or_none(t):
     return None
 
 
+# ---------------------- Project include graph helpers ----------------------
+
+def _is_under(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except Exception:
+        return False
+
+
+def _is_under_any(path: Path, roots: List[Path]) -> bool:
+    return any(_is_under(path, r) for r in roots)
+
+
+def collect_needed_project_headers(tu, start_c_path: Path, project_roots: List[Path]) -> List[Path]:
+    """
+    Using TU include info, collect direct + transitive headers that are under project_roots.
+    Traverse only across project headers (stop on non-project includes).
+    """
+    start_c_path = start_c_path.resolve()
+    project_roots = [r.resolve() for r in project_roots]
+
+    # Build adjacency: source file -> set(included project headers)
+    adj: Dict[Path, Set[Path]] = {}
+
+    for inc in tu.get_includes():
+        try:
+            src = Path(inc.source.name).resolve()
+            incp = Path(inc.include.name).resolve()
+        except Exception:
+            continue
+
+        if not _is_under_any(incp, project_roots):
+            continue
+
+        if not (src == start_c_path or _is_under_any(src, project_roots)):
+            continue
+
+        adj.setdefault(src, set()).add(incp)
+
+    needed: Set[Path] = set()
+    stack: List[Path] = list(adj.get(start_c_path, set()))
+    seen: Set[Path] = set()
+
+    while stack:
+        h = stack.pop()
+        if h in seen:
+            continue
+        seen.add(h)
+        needed.add(h)
+        for nxt in adj.get(h, set()):
+            if nxt not in seen:
+                stack.append(nxt)
+
+    return sorted(needed)
+
+
 # ---------------------- Main ----------------------
 
 def main():
@@ -189,12 +245,14 @@ def main():
 
     index = Index.create()
 
-    headers_all = list_headers(scan_roots)
     c_files = list_c_files(scan_roots)
 
     for c_path in c_files:
         tu = index.parse(str(c_path), args=clang_args)
         tu_globals = collect_tu_globals(tu.cursor)
+
+        # Compute per-TU needed project headers (direct + transitive across project headers)
+        needed_headers: List[Path] = collect_needed_project_headers(tu, c_path, scan_roots)
 
         for fn in tu.cursor.get_children():
             if fn.kind != CursorKind.FUNCTION_DECL or not fn.is_definition():
@@ -247,7 +305,8 @@ def main():
                 "",
             ]
 
-            for h in headers_all:
+            # Include only needed project headers (direct + transitive)
+            for h in needed_headers:
                 header_lines.append(f'#include "{h.name}"')
             header_lines.append("")
 
@@ -358,8 +417,8 @@ def main():
 
             write_text(src_dir / f"{fn_name}.c", "\n".join(impl))
 
-            # ================== copy cleaned headers ==================
-            for h in headers_all:
+            # ================== copy cleaned headers (only needed project headers) ==================
+            for h in needed_headers:
                 cleaned = remove_function_proto_from_header(read_text(h), fn_name)
                 write_text(src_dir / h.name, cleaned)
 
@@ -371,7 +430,8 @@ def main():
                     "",
                 ]
 
-                for h in headers_all:
+                # Include mocks only for needed project headers
+                for h in needed_headers:
                     test_c.append(f'#include "mock_{h.name}"')
 
                 test_c += [

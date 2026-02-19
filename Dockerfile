@@ -6,12 +6,26 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        # toolchains + build
         build-essential \
         cmake \
         ninja-build \
         gcc \
         g++ \
+        git \
+        ca-certificates \
+        pkg-config \
+        bear \
+        # clang/llvm stack
+        clang \
+        llvm \
+        lldb \
+        clang-tools \
+        clang-tidy \
+        clang-format \
+        # cppcheck + MISRA addon usage
         cppcheck \
+        # python + libclang for tooling that needs it
         python3 \
         python3-pip \
         python3-setuptools \
@@ -19,13 +33,16 @@ RUN apt-get update && \
         python3-requests \
         python3-lxml \
         python3-pygments \
-        git \
-        ca-certificates \
-        clang-format && \
-    rm -rf /var/lib/apt/lists/*
+        python3-clang-17 \
+        libclang-17-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# symlink for libclang (useful for Python bindings that expect /usr/lib/libclang.so)
+RUN ln -s /usr/lib/llvm-17/lib/libclang.so /usr/lib/libclang.so || true
 
 WORKDIR /workspace
 
+# MISRA addon configuration
 RUN mkdir -p /opt/misra && \
     cat <<'EOF' > /opt/misra/misra.json
 {
@@ -36,12 +53,12 @@ RUN mkdir -p /opt/misra && \
 }
 EOF
 
+# MISRA run helper
 RUN cat <<'EOF' > /usr/local/bin/run-misra-check.sh
 #!/usr/bin/env bash
 set -euo pipefail
 
 PROJ_DIR="${1:-$(pwd)}"
-
 cd "${PROJ_DIR}"
 
 CC_JSON="$(find . -maxdepth 5 -type f -name compile_commands.json | head -n 1 || true)"
@@ -75,6 +92,7 @@ echo "MISRA analysis completed. XML saved to ${PROJ_DIR}/cppcheck_misra_results.
 EOF
 RUN chmod +x /usr/local/bin/run-misra-check.sh
 
+# Bulk build + MISRA sweep helper
 RUN cat <<'EOF' > /usr/local/bin/build-and-check-all.sh
 #!/usr/bin/env bash
 set -euo pipefail
@@ -95,7 +113,6 @@ mapfile -t PROJECTS < <(
   | xargs -0 -n1 dirname \
   | sort -u
 )
-
 
 if [[ "${#PROJECTS[@]}" -eq 0 ]]; then
   echo "No CMake projects found under ${ROOT_DIR}" >&2
@@ -122,7 +139,7 @@ for PROJ in "${PROJECTS[@]}"; do
 
   echo "Running MISRA analysis..." >&2
   if ! run-misra-check.sh "${PROJ}"; then
-    echo "⚠️ MISRA analysis FAILED in ${PROJ} (continuing)" >&2
+    echo "MISRA analysis FAILED in ${PROJ} (continuing)" >&2
   fi
 
   echo "Done with ${PROJ}" >&2
@@ -133,10 +150,7 @@ echo "All projects under ${ROOT_DIR} processed." >&2
 EOF
 RUN chmod +x /usr/local/bin/build-and-check-all.sh
 
-
-
-
-
+# Normalize line endings in case files were generated on Windows
 RUN find /usr/local/bin -type f -exec sed -i 's/\r$//' {} \;
 
-
+CMD ["/bin/bash"]

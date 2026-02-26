@@ -9,7 +9,6 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime
-import getpass
 from typing import Optional
 
 from common_utils import (
@@ -28,8 +27,9 @@ UNIT_TEST_PREFIX = "TEST_"
 SCRIPT_PATH = Path(__file__).resolve()
 PROJECT_ROOT = SCRIPT_PATH.parent.parent
 
-GIT_RESULT = PROJECT_ROOT/ "UnitTestResults"
+GIT_RESULT = PROJECT_ROOT / "UnitTestResults"
 UNIT_EXECUTION_FOLDER = SCRIPT_PATH.parent / "utExecutionAndResults" / "utUnderTest"
+UNIT_EXECUTION_FOLDER_TEST = UNIT_EXECUTION_FOLDER / "test"
 UNIT_EXECUTION_FOLDER_BUILD = UNIT_EXECUTION_FOLDER / "build"
 UNIT_RESULT_FOLDER = SCRIPT_PATH.parent / "utExecutionAndResults" / "utResults"
 RESULT_REPORT = "total_result_report.txt"
@@ -55,14 +55,15 @@ def preflight_checks(project_root: Path):
     require_python(3, 8)
     require_command("docker")
     require_dir(project_root, "Project root")
-    #require_dir(project_root / "code", "Code directory ('code')")
+    # require_dir(project_root / "code", "Code directory ('code')")
     require_docker_running()
     info("Preflight checks OK.")
 
 
 @dataclass
 class TestResultRow:
-    function_name: str
+    module_function_name: str   # C function under test (reported as "function_name")
+    test_name: str              # Unity test function name
     total: str
     passed: str
     failed: str
@@ -70,20 +71,20 @@ class TestResultRow:
     linesCvrg: str
     branchesCvrg: str
     date_time: str
-    tester: str
 
     def to_csv_line(self) -> str:
         return (
-            f"{self.function_name},"
+            f"{self.module_function_name},"
+            f"{self.test_name},"
             f"{self.total},"
             f"{self.passed},"
             f"{self.failed},"
             f"{self.ignored},"
             f"{self.linesCvrg},"
             f"{self.branchesCvrg},"
-            f"{self.date_time},"
-            f"{self.tester}"
+            f"{self.date_time}"
         )
+
 
 @dataclass
 class UnitModule:
@@ -100,8 +101,121 @@ class UnitModule:
     def test_c_path(self) -> Path:
         return self.test_case_folder / "src" / f"{self.function_name}.c"
 
-from pathlib import Path
 
+def split_unity_tests(relative_dir):
+    import os
+    import re
+
+    # inline regex
+    FUNC_RE = re.compile(
+        r'\bvoid\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*void\s*\)\s*{',
+        re.MULTILINE
+    )
+
+    # inline match_brace
+    def _match_brace(text, idx):
+        depth = 0
+        i = idx
+        while i < len(text):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return i
+            i += 1
+        return -1
+
+    # inline find_function
+    def _find_function(text, name):
+        pat = re.compile(r'\bvoid\s+' + re.escape(name) + r'\s*\(\s*void\s*\)\s*{')
+        m = pat.search(text)
+        if not m:
+            return None
+        start = m.start()
+        brace = text.find("{", m.end() - 1)
+        end = _match_brace(text, brace)
+        return text[start:end+1]
+
+    script_dir = os.path.abspath(os.path.dirname(__file__))
+    input_dir = os.path.abspath(os.path.join(script_dir, relative_dir))
+
+    if not os.path.isdir(input_dir):
+        raise ValueError(f"Directory does not exist: {input_dir}")
+
+    c_files = [f for f in os.listdir(input_dir) if f.startswith("test_") and f.endswith(".c")]
+    if not c_files:
+        raise RuntimeError("No test_*.c files found.")
+
+    original_files = [os.path.join(input_dir, f) for f in c_files]
+
+    for c_file in c_files:
+        c_path = os.path.join(input_dir, c_file)
+        with open(c_path, "r", encoding="utf-8") as f:
+            text = f.read()
+
+        setup = _find_function(text, "setUp")
+        teardown = _find_function(text, "tearDown")
+
+        tests = []
+        for m in FUNC_RE.finditer(text):
+            name = m.group(1)
+            if not name.startswith("test_"):
+                continue
+            brace = text.find("{", m.end() - 1)
+            end = _match_brace(text, brace)
+            tests.append((name, text[m.start():end+1]))
+
+        if not tests:
+            continue
+
+        indices = []
+        if setup:
+            indices.append(text.index(setup))
+        if teardown:
+            indices.append(text.index(teardown))
+
+        if indices:
+            preamble_end = min(indices)
+        else:
+            first_test_start = min(text.index(snippet) for _, snippet in tests)
+            preamble_end = first_test_start
+
+        preamble = text[:preamble_end].rstrip() + "\n\n"
+
+        for name, body in tests:
+            base_no_ext = os.path.splitext(c_file)[0]
+            base_core = base_no_ext[5:] if base_no_ext.startswith("test_") else base_no_ext
+            prefix_to_strip = base_core + "_"
+
+            func_core = name[5:] if name.startswith("test_") else name
+
+            if func_core.startswith(prefix_to_strip):
+                output_name = func_core[len(prefix_to_strip):]
+            else:
+                output_name = func_core
+
+            out_path = os.path.join(input_dir, f"test_{output_name}.c")
+
+            if os.path.exists(out_path):
+                counter = 1
+                while os.path.exists(os.path.join(input_dir, f"test_{output_name}_{counter}.c")):
+                    counter += 1
+                out_path = os.path.join(input_dir, f"test_{output_name}_{counter}.c")
+
+            with open(out_path, "w", encoding="utf-8") as out:
+                out.write(preamble)
+                if setup:
+                    out.write(setup + "\n\n")
+                if teardown:
+                    out.write(teardown + "\n\n")
+                out.write(body + "\n")
+
+    for orig in original_files:
+        try:
+            os.remove(orig)
+        except:
+            pass
 
 
 def find_function_definition(root: Path, func_name: str):
@@ -251,7 +365,6 @@ def extract_function_name(path_str: str) -> str:
     return name_no_ext
 
 
-
 def update_unit_under_test(module: UnitModule, unit_name: str):
     extracted_body = find_and_extract_function(module.module_name, module.function_name, module.source_dir)
     if extracted_body is None:
@@ -273,7 +386,8 @@ def load_result_rows(summary_file: Path) -> dict[str, TestResultRow]:
         return rows
 
     first_non_empty = next((ln for ln in lines if ln.strip()), "")
-    header_csv = "function_name,total,passed,failed,ignored,linesCvrg,branchesCvrg,Date and time,Tester"
+    # Default CSV header (without Tester)
+    header_csv = "function_name,test_name,total,passed,failed,ignored,linesCvrg,branchesCvrg,Date and time"
 
     if first_non_empty.startswith("|"):
         header_cells: list[str] = []
@@ -299,15 +413,16 @@ def load_result_rows(summary_file: Path) -> dict[str, TestResultRow]:
             except ValueError:
                 return default
 
-        idx_name   = idx("function_name", 0)
-        idx_total  = idx("total")
-        idx_passed = idx("passed")
-        idx_failed = idx("failed")
-        idx_ignored = idx("ignored")
-        idx_lines  = idx("linesCvrg")
-        idx_branches = idx("branchesCvrg")
-        idx_date   = idx("Date and time")
-        idx_tester = idx("Tester")
+        idx_module_fn = idx("function_name", 0)
+        idx_test_name = idx("test_name", 1)
+        idx_total     = idx("total")
+        idx_passed    = idx("passed")
+        idx_failed    = idx("failed")
+        idx_ignored   = idx("ignored")
+        idx_lines     = idx("linesCvrg")
+        idx_branches  = idx("branchesCvrg")
+        idx_date      = idx("Date and time")
+        # Any legacy "Tester" column is ignored
 
         def get_cell(row: list[str], i: int) -> str:
             if i is None or i < 0 or i >= len(row):
@@ -315,11 +430,13 @@ def load_result_rows(summary_file: Path) -> dict[str, TestResultRow]:
             return row[i]
 
         for row in data_rows_cells:
-            fn = get_cell(row, idx_name)
-            if not fn:
+            fn = get_cell(row, idx_module_fn)
+            tn = get_cell(row, idx_test_name)
+            if not tn:
                 continue
-            rows[fn] = TestResultRow(
-                function_name=fn,
+            rows[tn] = TestResultRow(
+                module_function_name=fn,
+                test_name=tn,
                 total=get_cell(row, idx_total),
                 passed=get_cell(row, idx_passed),
                 failed=get_cell(row, idx_failed),
@@ -327,151 +444,126 @@ def load_result_rows(summary_file: Path) -> dict[str, TestResultRow]:
                 linesCvrg=get_cell(row, idx_lines),
                 branchesCvrg=get_cell(row, idx_branches),
                 date_time=get_cell(row, idx_date),
-                tester=get_cell(row, idx_tester),
             )
         return rows
 
+    # CSV path
     header_line = lines[0].strip()
     if "function_name" not in header_line:
         header_line = header_csv
+
+    headers = [h.strip() for h in header_line.split(",")]
+    hmap = {name: i for i, name in enumerate(headers)}
+
+    def hget(row_parts, name, default=""):
+        i = hmap.get(name, -1)
+        return row_parts[i].strip() if 0 <= i < len(row_parts) else default
 
     for line in lines[1:]:
         stripped = line.strip()
         if not stripped:
             continue
         parts = [p.strip() for p in stripped.split(",")]
-        if len(parts) < 5:
+
+        tn = hget(parts, "test_name")
+        if not tn:
+            # Legacy rows without test_name cannot be reconstructed reliably; skip
             continue
-        while len(parts) < 9:
-            parts.append("")
-        fn, t, p, f, ig, lc, bc, dt, tst = parts[:9]
-        if not fn:
-            continue
-        rows[fn] = TestResultRow(fn, t, p, f, ig, lc, bc, dt, tst)
+
+        rows[tn] = TestResultRow(
+            module_function_name=hget(parts, "function_name"),
+            test_name=tn,
+            total=hget(parts, "total"),
+            passed=hget(parts, "passed"),
+            failed=hget(parts, "failed"),
+            ignored=hget(parts, "ignored"),
+            linesCvrg=hget(parts, "linesCvrg"),
+            branchesCvrg=hget(parts, "branchesCvrg"),
+            date_time=hget(parts, "Date and time"),
+        )
 
     return rows
 
 
 def update_total_result_report(build_folder: Path, function_name: str, report_folder: Path):
-    pass_file = build_folder / "gcov" / "results" / f"test_{function_name}.pass"
-    fail_file = build_folder / "gcov" / "results" / f"test_{function_name}.fail"
-    coverage_file = build_folder / "artifacts" / "gcov" / "gcovr" / "GcovCoverageResults.functions.html"
-    report_file = pass_file if pass_file.exists() else fail_file
+    results_dir = build_folder / "gcov" / "results"
+    coverage_file = (
+        build_folder / "artifacts" / "gcov" / "gcovr" /
+        "GcovCoverageResults.functions.html"
+    )
 
     now_str = datetime.now().strftime("%d/%m/%y %H:%M")
-    tester = getpass.getuser()
 
     report_folder.mkdir(parents=True, exist_ok=True)
     summary_file = report_folder / RESULT_REPORT
-
     rows = load_result_rows(summary_file)
 
-    def extract_coverage_percent(html_text: str, label: str) -> Optional[str]:
-        # Looks for rows like:
-        # <th scope="row">Lines:</th> ... <td class="...">100.0%</td>
-        # We capture the last <td> in that row (Coverage column).
+    # ---------------------------------------------------------------------
+    # Collect all .pass and .fail files inside gcov/results/
+    # ---------------------------------------------------------------------
+    test_files = list(results_dir.glob("*.pass")) + list(results_dir.glob("*.fail"))
+
+    # Extract function name from file name (remove extension)
+    # E.g. "test_myFunc.pass" → "myFunc"
+    def extract_func_name(path: Path) -> str:
+        name = path.stem  # "test_myFunc"
+        if name.startswith("test_"):
+            return name[5:]
+        return name
+
+    # ---------------------------------------------------------------------
+    # Extract coverage from HTML if available
+    # ---------------------------------------------------------------------
+    def extract_coverage(html: str, label: str) -> Optional[str]:
         row_re = re.compile(
             rf"<tr>\s*<th[^>]*scope=\"row\"[^>]*>\s*{re.escape(label)}\s*</th>\s*"
             rf"<td[^>]*>.*?</td>\s*<td[^>]*>.*?</td>\s*<td[^>]*>(?P<pct>[^<]+)</td>\s*</tr>",
             re.IGNORECASE | re.DOTALL,
         )
-        m = row_re.search(html_text)
-        if not m:
-            return None
-        return m.group("pct").strip()
+        m = row_re.search(html)
+        return m.group("pct").strip() if m else None
 
-    linesCvrg: Optional[str] = None
-    branchesCvrg: Optional[str] = None
+    html = None
+    linesCvrg, branchesCvrg = None, None
+
     if coverage_file.exists():
         try:
             html = coverage_file.read_text(encoding="utf-8", errors="ignore")
-            linesCvrg = extract_coverage_percent(html, "Lines:")
-            branchesCvrg = extract_coverage_percent(html, "Branches:")
+            linesCvrg = extract_coverage(html, "Lines:")
+            branchesCvrg = extract_coverage(html, "Branches:")
         except Exception as e:
             warn(f"Error reading coverage file '{coverage_file}': {e}")
     else:
         warn(f"Coverage file does not exist: {coverage_file}")
 
-    # ============================================================
-    # If no report exists -> mark FAILED, but still store coverage
-    # (if available) so you can see what gcov produced.
-    # ============================================================
-    if not report_file.exists():
-        warn(f"Report file does not exist: {report_file}. Marking as FAILED in summary.")
+    # ---------------------------------------------------------------------
+    # Process every test file found
+    # ---------------------------------------------------------------------
+    for f in test_files:
+        test_name = extract_func_name(f)
+        passed = f.suffix == ".pass"
 
-        rows[function_name] = TestResultRow(
-            function_name=function_name,
-            total="FAILED",
-            passed="FAILED",
-            failed="FAILED",
-            ignored="FAILED",
-            linesCvrg=linesCvrg or "FAILED",
-            branchesCvrg=branchesCvrg or "FAILED",
+        rows[test_name] = TestResultRow(
+            module_function_name=function_name,   # real C FUNCTION under test
+            test_name=test_name,                  # Unity test function name
+            total="PASSED" if passed else "FAILED",
+            passed="PASSED" if passed else "FAILED",
+            failed="-" if passed else "FAILED",
+            ignored="-",
+            linesCvrg=linesCvrg or "-",
+            branchesCvrg=branchesCvrg or "-",
             date_time=now_str,
-            tester=tester,
         )
 
-        header_csv = "function_name,total,passed,failed,ignored,linesCvrg,branchesCvrg,Date and time,Tester"
-        lines_out = [header_csv] + [row.to_csv_line() for row in rows.values()]
-        summary_file.write_text("\n".join(lines_out) + "\n", encoding="utf-8")
+    # ---------------------------------------------------------------------
+    # Write CSV (no Tester column)
+    # ---------------------------------------------------------------------
+    header = "function_name,test_name,total,passed,failed,ignored,linesCvrg,branchesCvrg,Date and time"
+    lines_out = [header] + [row.to_csv_line() for row in rows.values()]
+    summary_file.write_text("\n".join(lines_out) + "\n", encoding="utf-8")
 
-        info(f"Updated summary for '{function_name}' (FAILED - no report found): {summary_file}")
-        return
+    info(f"Updated summary for {len(test_files)} test results → {summary_file}")
 
-    # ============================================================
-    # Normal flow: report exists -> parse values
-    # ============================================================
-    total = passed = failed = ignored = None
-    try:
-        for line in report_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-            line = line.strip()
-            if line.startswith(":total:"):
-                total = line.split(":", 2)[2].strip()
-            elif line.startswith(":passed:"):
-                passed = line.split(":", 2)[2].strip()
-            elif line.startswith(":failed:"):
-                failed = line.split(":", 2)[2].strip()
-            elif line.startswith(":ignored:"):
-                ignored = line.split(":", 2)[2].strip()
-
-        if None in (total, passed, failed, ignored):
-            warn(f"Missing values in report file: {report_file}. Marking as FAILED in summary.")
-            total = passed = failed = ignored = "FAILED"
-
-        rows[function_name] = TestResultRow(
-            function_name=function_name,
-            total=total,
-            passed=passed,
-            failed=failed,
-            ignored=ignored,
-            linesCvrg=linesCvrg or "",
-            branchesCvrg=branchesCvrg or "",
-            date_time=now_str,
-            tester=tester,
-        )
-
-        header_csv = "function_name,total,passed,failed,ignored,linesCvrg,branchesCvrg,Date and time,Tester"
-        lines_out = [header_csv] + [row.to_csv_line() for row in rows.values()]
-        summary_file.write_text("\n".join(lines_out) + "\n", encoding="utf-8")
-        info(f"Updated summary for '{function_name}': {summary_file}")
-    except Exception as e:
-        warn(f"Error updating report data: {e}. Marking as FAILED in summary.")
-
-        rows[function_name] = TestResultRow(
-            function_name=function_name,
-            total="FAILED",
-            passed="FAILED",
-            failed="FAILED",
-            ignored="FAILED",
-            date_time=now_str,
-            tester=tester
-        )
-
-        header_csv = "function_name,total,passed,failed,ignored,Date and time,Tester"
-        lines_out = [header_csv] + [row.to_csv_line() for row in rows.values()]
-        summary_file.write_text("\n".join(lines_out) + "\n", encoding="utf-8")
-
-        info(f"Updated summary for '{function_name}' (FAILED due to exception): {summary_file}")
 
 def format_total_result_report(report_folder: Path):
     summary_file = report_folder / RESULT_REPORT
@@ -521,8 +613,9 @@ def format_total_result_report(report_folder: Path):
 def run_and_collect_results(module: UnitModule):
     function_name = module.function_name
     update_unit_under_test(module, function_name)
+    split_unity_tests(UNIT_EXECUTION_FOLDER_TEST)
     run_cmd(DOCKER_CLEAN, check=True)
-    run_cmd(DOCKER_BASE + ["ceedling", f"gcov:{function_name}"], check=True, stopScript=False)
+    run_cmd(DOCKER_BASE + ["ceedling", f"gcov:all"], check=True, stopScript=False)
     update_total_result_report(UNIT_EXECUTION_FOLDER_BUILD, function_name, UNIT_RESULT_FOLDER)
     copy_folder_contents(UNIT_EXECUTION_FOLDER_BUILD, UNIT_RESULT_FOLDER / f"{function_name}Results")
 
@@ -539,10 +632,10 @@ Usage:
 if __name__ == "__main__":
     preflight_check(
         script_dir=PROJECT_ROOT,
-        min_python=(3,8),
+        min_python=(3, 8),
         require_docker=True,
         check_docker_daemon=True,
-        #required_dirs=[(PROJECT_ROOT, 'Project root'), (PROJECT_ROOT / 'code', "Code directory ('code')")],
+        # required_dirs=[(PROJECT_ROOT, 'Project root'), (PROJECT_ROOT / 'code', "Code directory ('code')")],
     )
 
     if len(sys.argv) < 2:
@@ -552,6 +645,7 @@ if __name__ == "__main__":
     if sys.argv[1] in ("-h", "--help", "help"):
         print_help()
         sys.exit(0)
+
     clear_folder(GIT_RESULT)
     clear_folder(UNIT_EXECUTION_FOLDER)
     clear_folder(UNIT_RESULT_FOLDER)
@@ -580,7 +674,7 @@ if __name__ == "__main__":
 
     format_total_result_report(UNIT_RESULT_FOLDER)
 
-    copy_entire_folder(UNIT_RESULT_FOLDER,GIT_RESULT)
+    copy_entire_folder(UNIT_RESULT_FOLDER, GIT_RESULT)
     clear_folder(UNIT_EXECUTION_FOLDER)
     clear_folder(UNIT_RESULT_FOLDER)
     info("Done.")

@@ -369,8 +369,9 @@ def main():
                     if not is_const_qualified(t) and array_count_or_none(t) is not None:
                         need_string = True
 
-            # --- include solo dei project headers necessari (PRIMA del commento doxygen) ---
-            for h in needed_headers:
+            # --- include TUTTI gli header di progetto ---
+            all_headers = list_headers(scan_roots)
+            for h in all_headers:
                 header_lines.append(f'#include "{h.name}"')
             header_lines.append("")
 

@@ -317,6 +317,9 @@ def main():
 
         # Compute per-TU needed project headers (direct + transitive across project headers)
         needed_headers: List[Path] = collect_needed_project_headers(tu, c_path, scan_roots)
+        # Tutti gli header disponibili nel progetto (pltf + cfg)
+        all_headers: List[Path] = list_headers(scan_roots)
+
 
         for fn in tu.cursor.get_children():
             if fn.kind != CursorKind.FUNCTION_DECL or not fn.is_definition():
@@ -370,7 +373,6 @@ def main():
                         need_string = True
 
             # --- include TUTTI gli header di progetto ---
-            all_headers = list_headers(scan_roots)
             for h in all_headers:
                 header_lines.append(f'#include "{h.name}"')
             header_lines.append("")
@@ -491,10 +493,12 @@ def main():
 
             write_text(src_dir / f"{fn_name}.c", "\n".join(impl))
 
-            # ================== copy cleaned headers (only needed project headers) ==================
-            for h in needed_headers:
+
+            # ================== copy cleaned headers (ALL project headers) ==================
+            for h in all_headers:
                 cleaned = remove_function_proto_from_header(read_text(h), fn_name)
                 write_text(src_dir / h.name, cleaned)
+
 
             # ================== create test/<fn>.c only if test didn't exist ==================
             if not test_exists:
@@ -505,7 +509,7 @@ def main():
                 ]
 
                 # Include mocks only for needed project headers
-                for h in needed_headers:
+                for h in all_headers:
                     test_c.append(f'#include "mock_{h.name}"')
 
                 test_c += [

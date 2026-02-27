@@ -2,8 +2,72 @@ import argparse
 import re
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
-
 from clang.cindex import Index, Cursor, CursorKind, StorageClass, TypeKind
+from typing import Optional  # aggiungi Optional agli import
+
+DOXY_BLOCK_START = "/**"
+DOXY_BLOCK_END = "*/"
+DOXY_LINE_PREFIXES = ("///", "//!")
+
+def get_doxygen_comment_for_function(fn: Cursor) -> Optional[str]:
+    """
+    Ritorna il commento Doxygen (testo originale) immediatamente sopra alla funzione,
+    se presente. Prova prima con libclang (raw_comment), poi fa fallback leggendo il file.
+    """
+    # 1) Tentativo diretto via libclang
+    raw = getattr(fn, "raw_comment", None)
+    if raw:
+        return raw
+
+    # 2) Fallback: cerca nel sorgente sopra l'inizio della funzione
+    loc = fn.extent.start
+    if not loc.file:
+        return None
+
+    src_path = Path(loc.file.name)
+    try:
+        lines = read_text(src_path).splitlines()
+    except Exception:
+        return None
+
+    i = loc.line - 2  # indice dell'ultima riga prima della funzione (0-based)
+    if i < 0:
+        return None
+
+    # 2a) Cerca un blocco /** ... */ che termini immediatamente sopra
+    j = i
+    # Salta eventuali righe vuote finali
+    while j >= 0 and lines[j].strip() == "":
+        j -= 1
+    if j >= 0 and lines[j].rstrip().endswith(DOXY_BLOCK_END):
+        # risali finché trovi l'inizio "/**"
+        k = j
+        found_start = False
+        while k >= 0:
+            if DOXY_BLOCK_START in lines[k]:
+                found_start = True
+                break
+            k -= 1
+        if found_start:
+            block = lines[k:j+1]
+            # Verifica che sia davvero un blocco Doxygen (/** ... */)
+            if any(DOXY_BLOCK_START in ln for ln in block):
+                return "\n".join(block)
+
+    # 2b) In alternativa, raccogli un gruppo contiguo di linee '///' o '//!'
+    j = i
+    # salta righe vuote
+    while j >= 0 and lines[j].strip() == "":
+        j -= 1
+    if j >= 0 and lines[j].lstrip().startswith(DOXY_LINE_PREFIXES):
+        buf = []
+        while j >= 0 and lines[j].lstrip().startswith(DOXY_LINE_PREFIXES):
+            buf.append(lines[j])
+            j -= 1
+        buf.reverse()
+        return "\n".join(buf)
+
+    return None
 
 
 # ---------------------- FS helpers ----------------------
@@ -287,6 +351,10 @@ def main():
             fn_text = text_from_extent(fn.extent)
             proto = function_prototype(fn)
 
+            doxy = get_doxygen_comment_for_function(fn)
+            if doxy:
+                header_lines.append(doxy)
+            header_lines.append(proto)
             need_stddef = False
             need_string = False
 

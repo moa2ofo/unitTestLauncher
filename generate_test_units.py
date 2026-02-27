@@ -354,13 +354,10 @@ def main():
                 f"#define TEST_{fn_name.upper()}_H",
                 "",
             ]
+
             fn_text = text_from_extent(fn.extent)
             proto = function_prototype(fn)
 
-            doxy = get_doxygen_comment_for_function(fn)
-            if doxy:
-                header_lines.append(doxy)
-            header_lines.append(proto)
             need_stddef = False
             need_string = False
 
@@ -372,13 +369,12 @@ def main():
                     if not is_const_qualified(t) and array_count_or_none(t) is not None:
                         need_string = True
 
-
-
-            # Include only needed project headers (direct + transitive)
+            # --- include solo dei project headers necessari (PRIMA del commento doxygen) ---
             for h in needed_headers:
                 header_lines.append(f'#include "{h.name}"')
             header_lines.append("")
 
+            # --- include standard necessari ---
             if need_stddef:
                 header_lines.append("#include <stddef.h>")
             if need_string:
@@ -386,8 +382,16 @@ def main():
             if need_stddef or need_string:
                 header_lines.append("")
 
-            header_lines.append(proto)
+            # --- commento DOXYGEN (prima del prototipo) ---
+            doxy = get_doxygen_comment_for_function(fn)
+            if doxy:
+                header_lines.append(doxy)
 
+            # --- prototipo funzione (solo UNA volta) ---
+            header_lines.append(proto)
+            header_lines.append("")
+
+            # --- accessor per variabili statiche ---
             for usr in sorted(used_stat_usr):
                 v = tu_globals[usr]
                 t = v.type

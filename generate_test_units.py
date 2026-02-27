@@ -438,6 +438,8 @@ def main():
                 for usr in sorted(used_glob_usr):
                     v = tu_globals[usr]
                     orig = text_from_extent(v.extent).strip()
+                    # Rimuove "extern" se presente all'inizio della dichiarazione
+                    orig = re.sub(r"^\s*extern\s+", "", orig)
                     if not orig.endswith(";"):
                         orig += ";"
                     impl.append(orig)

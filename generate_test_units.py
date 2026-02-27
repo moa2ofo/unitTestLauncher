@@ -348,6 +348,12 @@ def main():
             src_dir.mkdir(parents=True, exist_ok=True)
 
             _calls, used_glob_usr, used_stat_usr = analyze_function(fn, tu_globals)
+            # ================== src/<fn>.h ==================
+            header_lines = [
+                f"#ifndef TEST_{fn_name.upper()}_H",
+                f"#define TEST_{fn_name.upper()}_H",
+                "",
+            ]
             fn_text = text_from_extent(fn.extent)
             proto = function_prototype(fn)
 
@@ -366,12 +372,7 @@ def main():
                     if not is_const_qualified(t) and array_count_or_none(t) is not None:
                         need_string = True
 
-            # ================== src/<fn>.h ==================
-            header_lines = [
-                f"#ifndef TEST_{fn_name.upper()}_H",
-                f"#define TEST_{fn_name.upper()}_H",
-                "",
-            ]
+
 
             # Include only needed project headers (direct + transitive)
             for h in needed_headers:

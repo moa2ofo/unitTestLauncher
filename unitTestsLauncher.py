@@ -106,13 +106,13 @@ def split_unity_tests(relative_dir):
     import os
     import re
 
-    # inline regex
+    # Regex aggiornata:
+    # trova funzioni void test_XXX(void) oppure void testXXX(void)
     FUNC_RE = re.compile(
-        r'\bvoid\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*void\s*\)\s*{',
+        r'\bvoid\s+(test_[A-Za-z0-9_]*|test[A-Za-z0-9_]*)\s*\(\s*void\s*\)\s*{',
         re.MULTILINE
     )
 
-    # inline match_brace
     def _match_brace(text, idx):
         depth = 0
         i = idx
@@ -126,7 +126,6 @@ def split_unity_tests(relative_dir):
             i += 1
         return -1
 
-    # inline find_function
     def _find_function(text, name):
         pat = re.compile(r'\bvoid\s+' + re.escape(name) + r'\s*\(\s*void\s*\)\s*{')
         m = pat.search(text)
@@ -159,9 +158,7 @@ def split_unity_tests(relative_dir):
 
         tests = []
         for m in FUNC_RE.finditer(text):
-            name = m.group(1)
-            if not name.startswith("test_"):
-                continue
+            name = m.group(1)  # già cattura test_X o testX
             brace = text.find("{", m.end() - 1)
             end = _match_brace(text, brace)
             tests.append((name, text[m.start():end+1]))
@@ -186,9 +183,16 @@ def split_unity_tests(relative_dir):
         for name, body in tests:
             base_no_ext = os.path.splitext(c_file)[0]
             base_core = base_no_ext[5:] if base_no_ext.startswith("test_") else base_no_ext
-            prefix_to_strip = base_core + "_"
 
-            func_core = name[5:] if name.startswith("test_") else name
+            # Rimuove prefisso test_ o test
+            if name.startswith("test_"):
+                func_core = name[5:]
+            elif name.startswith("test"):
+                func_core = name[4:]
+            else:
+                func_core = name
+
+            prefix_to_strip = base_core + "_"
 
             if func_core.startswith(prefix_to_strip):
                 output_name = func_core[len(prefix_to_strip):]

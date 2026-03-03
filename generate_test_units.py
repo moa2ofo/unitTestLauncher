@@ -351,6 +351,13 @@ def main():
             src_dir.mkdir(parents=True, exist_ok=True)
 
             _calls, used_glob_usr, used_stat_usr = analyze_function(fn, tu_globals)
+            
+            # Nuovo: tutte le variabili globali non statiche presenti nel TU
+            all_nonstatic_glob_usr = {
+                usr for usr, v in tu_globals.items()
+                if classify_var(v) == (True, False)
+            }
+
             # ================== src/<fn>.h ==================
             header_lines = [
                 f"#ifndef TEST_{fn_name.upper()}_H",
@@ -433,12 +440,13 @@ def main():
                 "",
             ]
 
-            if used_glob_usr:
-                impl.append("/* globals used (real definitions) */")
-                for usr in sorted(used_glob_usr):
+            # Dichiara TUTTE le globali non statiche del TU,
+            # non solo quelle usate dalla funzione
+            if all_nonstatic_glob_usr:
+                impl.append("/* all non-static globals from this TU (real definitions) */")
+                for usr in sorted(all_nonstatic_glob_usr):
                     v = tu_globals[usr]
                     orig = text_from_extent(v.extent).strip()
-                    # Rimuove "extern" se presente all'inizio della dichiarazione
                     orig = re.sub(r"^\s*extern\s+", "", orig)
                     if not orig.endswith(";"):
                         orig += ";"

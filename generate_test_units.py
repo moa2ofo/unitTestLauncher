@@ -282,7 +282,35 @@ def collect_needed_project_headers(tu, start_c_path: Path, project_roots: List[P
 
     return sorted(needed)
 
+def remove_static_volatile(text: str) -> str:
+    """
+    Rimuove dichiarazioni/definizioni di funzioni e variabili che contengono
+    'static' o 'volatile'. Funziona su linee singole e su blocchi multilinea.
+    """
 
+    out = []
+    skip_block = False
+
+    for line in text.splitlines():
+        stripped = line.strip()
+
+        # se la linea contiene static o volatile → skip
+        if "static" in stripped or "volatile" in stripped:
+            continue
+
+        # rimuove anche eventuali dichiarazioni multilinea
+        if stripped.startswith("static") or stripped.startswith("volatile"):
+            skip_block = True
+            continue
+
+        if skip_block:
+            if ";" in stripped:
+                skip_block = False
+            continue
+
+        out.append(line)
+
+    return "\n".join(out)
 # ---------------------- Main ----------------------
 
 def main():
@@ -430,7 +458,8 @@ def main():
             header_lines.append("")
             header_lines.append(f"#endif /* TEST_{fn_name.upper()}_H */\n")
 
-            write_text(src_dir / f"{fn_name}.h", "\n".join(header_lines))
+            clean_h = remove_static_volatile("\n".join(header_lines))
+            write_text(src_dir / f"{fn_name}.h", clean_h)
 
             # ================== src/<fn>.c ==================
             impl = [

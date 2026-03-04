@@ -8,6 +8,8 @@ from typing import Optional  # aggiungi Optional agli import
 DOXY_BLOCK_START = "/**"
 DOXY_BLOCK_END = "*/"
 DOXY_LINE_PREFIXES = ("///", "//!")
+REMOVE_KEYWORDS = ["static", "inline"]   # ← aggiorni questa lista e tutto funziona
+
 
 def get_doxygen_comment_for_function(fn: Cursor) -> Optional[str]:
     """
@@ -282,35 +284,20 @@ def collect_needed_project_headers(tu, start_c_path: Path, project_roots: List[P
 
     return sorted(needed)
 
-def remove_static_volatile(text: str) -> str:
+
+def strip_keywords(text: str, keywords=None) -> str:
     """
-    Rimuove dichiarazioni/definizioni di funzioni e variabili che contengono
-    'static' o 'volatile'. Funziona su linee singole e su blocchi multilinea.
+    Rimuove le keyword specificate come parole intere.
     """
+    if keywords is None:
+        keywords = REMOVE_KEYWORDS
 
-    out = []
-    skip_block = False
+    for kw in keywords:
+        pattern = rf"\b{kw}\b"
+        text = re.sub(pattern, "", text)
 
-    for line in text.splitlines():
-        stripped = line.strip()
+    return text
 
-        # se la linea contiene static o volatile → skip
-        if "static" in stripped or "volatile" in stripped:
-            continue
-
-        # rimuove anche eventuali dichiarazioni multilinea
-        if stripped.startswith("static") or stripped.startswith("volatile"):
-            skip_block = True
-            continue
-
-        if skip_block:
-            if ";" in stripped:
-                skip_block = False
-            continue
-
-        out.append(line)
-
-    return "\n".join(out)
 # ---------------------- Main ----------------------
 
 def main():
@@ -458,7 +445,7 @@ def main():
             header_lines.append("")
             header_lines.append(f"#endif /* TEST_{fn_name.upper()}_H */\n")
 
-            clean_h = remove_static_volatile("\n".join(header_lines))
+            clean_h = strip_keywords("\n".join(header_lines))
             write_text(src_dir / f"{fn_name}.h", clean_h)
 
             # ================== src/<fn>.c ==================
@@ -530,13 +517,16 @@ def main():
             impl.append("/* FUNCTION TO TEST */")
             impl.append(fn_text)
 
-            write_text(src_dir / f"{fn_name}.c", "\n".join(impl))
+            clean_c = strip_keywords("\n".join(impl))
+            write_text(src_dir / f"{fn_name}.c", clean_c)
 
 
             # ================== copy cleaned headers (ALL project headers) ==================
             for h in all_headers:
                 cleaned = remove_function_proto_from_header(read_text(h), fn_name)
+                cleaned = strip_keywords(cleaned)
                 write_text(src_dir / h.name, cleaned)
+
 
 
             # ================== create test/<fn>.c only if test didn't exist ==================

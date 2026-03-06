@@ -286,17 +286,34 @@ def collect_needed_project_headers(tu, start_c_path: Path, project_roots: List[P
 
 
 def strip_keywords(text: str, keywords=None) -> str:
-    """
-    Rimuove le keyword specificate come parole intere.
-    """
     if keywords is None:
         keywords = REMOVE_KEYWORDS
 
-    for kw in keywords:
-        pattern = rf"\b{kw}\b"
-        text = re.sub(pattern, "", text)
+    protected_pattern = re.compile(
+        r"""
+        /\*.*?\*/            |
+        //.*?$               |
+        "(?:\\.|[^"\\])*"    |
+        '(?:\\.|[^'\\])*'
+        """,
+        re.DOTALL | re.MULTILINE | re.VERBOSE,
+    )
 
-    return text
+    protected_chunks = []
+
+    def protect(match):
+        protected_chunks.append(match.group(0))
+        return f"__PROTECTED_{len(protected_chunks)-1}__"
+
+    masked = protected_pattern.sub(protect, text)
+
+    for kw in keywords:
+        masked = re.sub(rf"\b{re.escape(kw)}\b", "", masked)
+
+    def restore(match):
+        return protected_chunks[int(match.group(1))]
+
+    return re.sub(r"__PROTECTED_(\d+)__", restore, masked)
 
 # ---------------------- Main ----------------------
 

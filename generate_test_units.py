@@ -549,7 +549,7 @@ def main():
             # ================== create test/<fn>.c only if test didn't exist ==================
             if not test_exists:
                 test_c = [
-                    f'#include <{fn_name}.h>',
+                    f'#include "{fn_name}.h"',
                     '#include "unity.h"',
                     "",
                 ]

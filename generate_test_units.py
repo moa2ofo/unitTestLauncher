@@ -89,14 +89,6 @@ def _is_in_test_dir(p: Path) -> bool:
 
 # ---------------------- Discovery limited to ../pltf and ../cfg ----------------------
 
-def list_headers(roots: List[Path]) -> List[Path]:
-    out: List[Path] = []
-    for r in roots:
-        if r.is_dir():
-            out.extend([p for p in r.rglob("*.h") if p.is_file() and not _is_in_test_dir(p)])
-    return sorted(out)
-
-
 def list_c_files(roots: List[Path]) -> List[Path]:
     out: List[Path] = []
     for r in roots:
@@ -349,8 +341,6 @@ def main():
 
         # Compute per-TU needed project headers (direct + transitive across project headers)
         needed_headers: List[Path] = collect_needed_project_headers(tu, c_path, scan_roots)
-        # Tutti gli header disponibili nel progetto (pltf + cfg)
-        all_headers: List[Path] = list_headers(scan_roots)
 
 
         for fn in tu.cursor.get_children():
@@ -384,11 +374,6 @@ def main():
 
             _calls, used_glob_usr, used_stat_usr = analyze_function(fn, tu_globals)
             
-            # Nuovo: tutte le variabili globali non statiche presenti nel TU
-            all_nonstatic_glob_usr = {
-                usr for usr, v in tu_globals.items()
-                if classify_var(v) == (True, False)
-            }
 
             # ================== src/<fn>.h ==================
             header_lines = [
@@ -411,8 +396,8 @@ def main():
                     if not is_const_qualified(t) and array_count_or_none(t) is not None:
                         need_string = True
 
-            # --- include TUTTI gli header di progetto ---
-            for h in all_headers:
+            # --- include solo gli header necessari (diretti + transitivi) ---
+            for h in needed_headers:
                 header_lines.append(f'#include "{h.name}"')
             header_lines.append("")
 
@@ -473,11 +458,10 @@ def main():
                 "",
             ]
 
-            # Dichiara TUTTE le globali non statiche del TU,
-            # non solo quelle usate dalla funzione
-            if all_nonstatic_glob_usr:
-                impl.append("/* all non-static globals from this TU (real definitions) */")
-                for usr in sorted(all_nonstatic_glob_usr):
+            # Dichiara solo le globali non statiche usate dalla funzione
+            if used_glob_usr:
+                impl.append("/* non-static globals used by this function */")
+                for usr in sorted(used_glob_usr):
                     v = tu_globals[usr]
                     orig = text_from_extent(v.extent).strip()
                     orig = re.sub(r"^\s*extern\s+", "", orig)
@@ -538,8 +522,8 @@ def main():
             write_text(src_dir / f"{fn_name}.c", clean_c)
 
 
-            # ================== copy cleaned headers (ALL project headers) ==================
-            for h in all_headers:
+            # ================== copy cleaned headers (needed project headers only) ==================
+            for h in needed_headers:
                 cleaned = remove_function_proto_from_header(read_text(h), fn_name)
                 cleaned = strip_keywords(cleaned)
                 write_text(src_dir / h.name, cleaned)
@@ -555,7 +539,7 @@ def main():
                 ]
 
                 # Include mocks only for needed project headers
-                for h in all_headers:
+                for h in needed_headers:
                     test_c.append(f'#include "mock_{h.name}"')
 
                 test_c += [

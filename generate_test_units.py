@@ -422,18 +422,44 @@ def main():
 
             test_exists = test_pkg_dir.exists()
             src_exists = src_dir.exists()
-            src_empty = (not src_exists) or (src_exists and not any(src_dir.iterdir()))
+            src_empty = (not src_exists) or (not any(src_dir.iterdir()))
+            test_file_path = test_dir / f"test_{fn_name}.c"
 
-            # CASE 3: TEST exists + src not empty -> skip
+            # assicura sempre l'esistenza della cartella test/
+            test_dir.mkdir(parents=True, exist_ok=True)
+
+            # CASE 3: src esiste e non è vuota -> non rigenerare src
             if src_exists and not src_empty:
+                # però crea comunque il file di test se manca
+                if not test_file_path.exists():
+                    test_c = [
+                        f'#include "{fn_name}.h"',
+                        '#include "unity.h"',
+                        "",
+                    ]
+
+                    for h in needed_headers:
+                        test_c.append(f'#include "mock_{h.name}"')
+
+                    test_c += [
+                        "",
+                        "void setUp(void) {}",
+                        "void tearDown(void) {}",
+                        "",
+                        f"void test_{fn_name}(void)",
+                        "{",
+                        '    TEST_IGNORE_MESSAGE("Auto-generated stub test");',
+                        "}",
+                        "",
+                    ]
+
+                    write_text(test_file_path, "\n".join(test_c))
+                    print(f"[OK] Created missing test file for TEST_{fn_name}")
+
                 print(f"[SKIP] TEST_{fn_name} exists and src/ not empty")
                 continue
 
-            # CASE 1: TEST missing → create src + test
-            if not test_exists:
-                test_dir.mkdir(parents=True, exist_ok=True)
-
-            # CASE 1 and CASE 2: recreate src content
+            # rigenera src
             src_dir.mkdir(parents=True, exist_ok=True)
 
             _calls, used_glob_usr, used_stat_usr = analyze_function(fn, tu_globals)

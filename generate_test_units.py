@@ -10,6 +10,60 @@ DOXY_BLOCK_END = "*/"
 DOXY_LINE_PREFIXES = ("///", "//!")
 REMOVE_KEYWORDS = ["static", "inline"]   # ← aggiorni questa lista e tutto funziona
 
+def strip_function_keywords_in_header(text: str) -> str:
+    """
+    Rimuove 'static' e 'inline' solo dalle dichiarazioni/definizioni di funzione
+    negli header, senza toccare le variabili.
+    """
+
+    protected_pattern = re.compile(
+        r"""
+        /\*.*?\*/            |
+        //.*?$               |
+        "(?:\\.|[^"\\])*"    |
+        '(?:\\.|[^'\\])*'
+        """,
+        re.DOTALL | re.MULTILINE | re.VERBOSE,
+    )
+
+    protected_chunks = []
+
+    def protect(match):
+        protected_chunks.append(match.group(0))
+        return f"__PROTECTED_{len(protected_chunks)-1}__"
+
+    masked = protected_pattern.sub(protect, text)
+
+    # match abbastanza conservativo:
+    # prende righe che sembrano firme di funzione, non variabili
+    func_pattern = re.compile(
+        r"""
+        ^(?P<prefix>\s*)
+        (?P<quals>(?:(?:static|inline)\s+)+)
+        (?P<rest>
+            [A-Za-z_][\w\s\*\(\)]*      # tipo ritorno
+            \s+
+            [A-Za-z_]\w*                # nome funzione
+            \s*\([^;{}]*\)              # parametri
+            \s*(?:;|\{)                 # prototipo o definizione
+        )
+        """,
+        re.MULTILINE | re.VERBOSE,
+    )
+
+    def repl(match):
+        prefix = match.group("prefix")
+        rest = match.group("rest")
+        return f"{prefix}{rest}"
+
+    masked = func_pattern.sub(repl, masked)
+
+    def restore(match):
+        return protected_chunks[int(match.group(1))]
+
+    return re.sub(r"__PROTECTED_(\d+)__", restore, masked)
+
+
 def collect_local_defines(c_path: Path) -> Dict[str, str]:
     """
     Raccoglie le #define presenti nel file .c e restituisce:
@@ -340,36 +394,6 @@ def collect_needed_project_headers(tu, start_c_path: Path, project_roots: List[P
     return sorted(needed)
 
 
-def strip_keywords(text: str, keywords=None) -> str:
-    if keywords is None:
-        keywords = REMOVE_KEYWORDS
-
-    protected_pattern = re.compile(
-        r"""
-        /\*.*?\*/            |
-        //.*?$               |
-        "(?:\\.|[^"\\])*"    |
-        '(?:\\.|[^'\\])*'
-        """,
-        re.DOTALL | re.MULTILINE | re.VERBOSE,
-    )
-
-    protected_chunks = []
-
-    def protect(match):
-        protected_chunks.append(match.group(0))
-        return f"__PROTECTED_{len(protected_chunks)-1}__"
-
-    masked = protected_pattern.sub(protect, text)
-
-    for kw in keywords:
-        masked = re.sub(rf"\b{re.escape(kw)}\b", "", masked)
-
-    def restore(match):
-        return protected_chunks[int(match.group(1))]
-
-    return re.sub(r"__PROTECTED_(\d+)__", restore, masked)
-
 # ---------------------- Main ----------------------
 
 def main():
@@ -479,8 +503,13 @@ def main():
             need_stddef = False
             need_string = False
 
-            for usr in used_stat_usr:
+            for usr in sorted(used_stat_usr):
                 v = tu_globals[usr]
+
+                # copia solo static dichiarati nel file .c
+                if Path(str(v.location.file)).resolve() != c_path:
+                    continue
+
                 t = v.type
                 if is_array_type(t):
                     need_stddef = True
@@ -544,7 +573,7 @@ def main():
             header_lines.append("")
             header_lines.append(f"#endif /* TEST_{fn_name.upper()}_H */\n")
 
-            clean_h = strip_keywords("\n".join(header_lines))
+            clean_h = strip_function_keywords_in_header("\n".join(header_lines))
             write_text(src_dir / f"{fn_name}.h", clean_h)
 
             # ================== src/<fn>.c ==================
@@ -615,14 +644,14 @@ def main():
             impl.append("/* FUNCTION TO TEST */")
             impl.append(fn_text)
 
-            clean_c = strip_keywords("\n".join(impl))
+            clean_c = strip_function_keywords_in_header("\n".join(impl))
             write_text(src_dir / f"{fn_name}.c", clean_c)
 
 
             # ================== copy cleaned headers (needed project headers only) ==================
             for h in needed_headers:
                 cleaned = remove_function_proto_from_header(read_text(h), fn_name)
-                cleaned = strip_keywords(cleaned)
+                cleaned = strip_function_keywords_in_header(cleaned)
                 write_text(src_dir / h.name, cleaned)
 
 

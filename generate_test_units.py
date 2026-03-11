@@ -425,12 +425,12 @@ def main():
             src_empty = (not src_exists) or (not any(src_dir.iterdir()))
             test_file_path = test_dir / f"test_{fn_name}.c"
 
-            # assicura sempre l'esistenza della cartella test/
+            # assicura sempre che la cartella test/ esista
             test_dir.mkdir(parents=True, exist_ok=True)
 
-            # CASE 3: src esiste e non è vuota -> non rigenerare src
+            # se src esiste già ed è piena, non rigenerare src
+            # ma crea comunque il file di test se manca
             if src_exists and not src_empty:
-                # però crea comunque il file di test se manca
                 if not test_file_path.exists():
                     test_c = [
                         f'#include "{fn_name}.h"',
@@ -459,7 +459,7 @@ def main():
                 print(f"[SKIP] TEST_{fn_name} exists and src/ not empty")
                 continue
 
-            # rigenera src
+            # CASE 1 e CASE 2: rigenera src
             src_dir.mkdir(parents=True, exist_ok=True)
 
             _calls, used_glob_usr, used_stat_usr = analyze_function(fn, tu_globals)
@@ -628,14 +628,13 @@ def main():
 
 
             # ================== create test/<fn>.c only if test didn't exist ==================
-            if not test_exists:
+            if not test_file_path.exists():
                 test_c = [
                     f'#include "{fn_name}.h"',
                     '#include "unity.h"',
                     "",
                 ]
 
-                # Include mocks only for needed project headers
                 for h in needed_headers:
                     test_c.append(f'#include "mock_{h.name}"')
 
@@ -651,7 +650,7 @@ def main():
                     "",
                 ]
 
-                write_text(test_dir / f"test_{fn_name}.c", "\n".join(test_c))
+                write_text(test_file_path, "\n".join(test_c))
 
             print(f"[OK] Generated TEST_{fn_name} (src regenerated) -> {test_pkg_dir}")
 

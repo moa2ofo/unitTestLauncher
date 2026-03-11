@@ -10,6 +10,69 @@ DOXY_BLOCK_END = "*/"
 DOXY_LINE_PREFIXES = ("///", "//!")
 REMOVE_KEYWORDS = ["static", "inline"]   # ← aggiorni questa lista e tutto funziona
 
+def collect_local_defines(c_path: Path) -> Dict[str, str]:
+    """
+    Raccoglie le #define presenti nel file .c e restituisce:
+        { NOME_MACRO : testo_completo_define }
+    Supporta define mono-linea e multi-linea con backslash finale.
+    """
+    src = read_text(c_path)
+    lines = src.splitlines()
+
+    out: Dict[str, str] = {}
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if re.match(r"^\s*#\s*define\b", line):
+            block = [line]
+            while block[-1].rstrip().endswith("\\") and i + 1 < len(lines):
+                i += 1
+                block.append(lines[i])
+
+            full = "\n".join(block)
+            m = re.match(r"^\s*#\s*define\s+([A-Za-z_]\w*)\b", block[0])
+            if m:
+                name = m.group(1)
+                out[name] = full
+        i += 1
+
+    return out
+
+def extract_define_dependencies(define_text: str, all_define_names: Set[str], self_name: str) -> Set[str]:
+    deps = set()
+    for name in all_define_names:
+        if name == self_name:
+            continue
+        if re.search(rf"\b{re.escape(name)}\b", define_text):
+            deps.add(name)
+    return deps
+
+
+def collect_used_defines_in_function(fn_text: str, local_defines: Dict[str, str]) -> List[str]:
+    """
+    Restituisce le #define usate dalla funzione, includendo anche
+    le dipendenze transitive tra macro, in ordine stabile.
+    """
+    all_names = set(local_defines.keys())
+
+    directly_used = {
+        name for name in local_defines
+        if re.search(rf"\b{re.escape(name)}\b", fn_text)
+    }
+
+    needed = set(directly_used)
+    changed = True
+    while changed:
+        changed = False
+        for name in list(needed):
+            deps = extract_define_dependencies(local_defines[name], all_names, name)
+            new_deps = deps - needed
+            if new_deps:
+                needed.update(new_deps)
+                changed = True
+
+    ordered = [local_defines[name] for name in local_defines if name in needed]
+    return ordered
 
 def get_doxygen_comment_for_function(fn: Cursor) -> Optional[str]:
     """
@@ -338,6 +401,7 @@ def main():
     for c_path in c_files:
         tu = index.parse(str(c_path), args=clang_args)
         tu_globals = collect_tu_globals(tu.cursor)
+        local_defines = collect_local_defines(c_path)
 
         # Compute per-TU needed project headers (direct + transitive across project headers)
         needed_headers: List[Path] = collect_needed_project_headers(tu, c_path, scan_roots)
@@ -384,6 +448,7 @@ def main():
 
             fn_text = text_from_extent(fn.extent)
             proto = function_prototype(fn)
+            used_define_texts = collect_used_defines_in_function(fn_text, local_defines)
 
             need_stddef = False
             need_string = False
@@ -407,6 +472,12 @@ def main():
             if need_string:
                 header_lines.append("#include <string.h>")
             if need_stddef or need_string:
+                header_lines.append("")
+
+            # --- define locali usate dalla funzione ---
+            if used_define_texts:
+                for d in used_define_texts:
+                    header_lines.append(d)
                 header_lines.append("")
 
             # --- commento DOXYGEN (prima del prototipo) ---

@@ -494,10 +494,19 @@ def load_result_rows(summary_file: Path) -> dict[str, TestResultRow]:
 
 def update_total_result_report(build_folder: Path, function_name: str, report_folder: Path):
     results_dir = build_folder / "gcov" / "results"
-    coverage_file = (
-        build_folder / "artifacts" / "gcov" / "gcovr" /
-        "GcovCoverageResults.functions.html"
-    )
+    coverage_dir = build_folder / "artifacts" / "gcov" / "gcovr"
+    coverage_file = None
+
+    # Cerca tutti gli HTML che iniziano con "GcovCoverageResults." ma NON contengono "_help"
+    html_candidates = sorted(coverage_dir.glob("GcovCoverageResults*.html"))
+    for cand in html_candidates:
+        if "_help" not in cand.name:
+            coverage_file = cand
+            break
+
+    if coverage_file is None:
+        warn("Nessun file HTML di coverage valido trovato (tutti contenevano '_help').")
+
 
     now_str = datetime.now().strftime("%d/%m/%y %H:%M")
 
@@ -533,7 +542,7 @@ def update_total_result_report(build_folder: Path, function_name: str, report_fo
     html = None
     linesCvrg, branchesCvrg = None, None
 
-    if coverage_file.exists():
+    if coverage_file is not None and coverage_file.exists():
         try:
             html = coverage_file.read_text(encoding="utf-8", errors="ignore")
             linesCvrg = extract_coverage(html, "Lines:")
@@ -541,7 +550,8 @@ def update_total_result_report(build_folder: Path, function_name: str, report_fo
         except Exception as e:
             warn(f"Error reading coverage file '{coverage_file}': {e}")
     else:
-        warn(f"Coverage file does not exist: {coverage_file}")
+        warn("Coverage file does not exist or è stato ignorato perché conteneva '_help'.")
+
 
     # ---------------------------------------------------------------------
     # Process every test file found

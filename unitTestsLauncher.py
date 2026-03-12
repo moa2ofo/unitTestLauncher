@@ -22,19 +22,22 @@ from common_utils import (
     copy_folder_contents
 )
 
+from path_config_loader import load_paths
+
 UNIT_TEST_PREFIX = "TEST_"
 
-SCRIPT_PATH = Path(__file__).resolve()
-PROJECT_ROOT = SCRIPT_PATH.parent.parent
+PATHS = load_paths(__file__)
+SCRIPT_PATH = PATHS.script_path
+PROJECT_ROOT = PATHS.project_root
 
-GIT_RESULT = PROJECT_ROOT / "UnitTestResults"
-UNIT_EXECUTION_FOLDER = SCRIPT_PATH.parent / "utExecutionAndResults" / "utUnderTest"
-UNIT_EXECUTION_FOLDER_TEST = UNIT_EXECUTION_FOLDER / "test"
-UNIT_EXECUTION_FOLDER_BUILD = UNIT_EXECUTION_FOLDER / "build"
-UNIT_RESULT_FOLDER = SCRIPT_PATH.parent / "utExecutionAndResults" / "utResults"
+GIT_RESULT = PATHS.git_result
+UNIT_EXECUTION_FOLDER = PATHS.unit_execution_folder
+UNIT_EXECUTION_FOLDER_TEST = PATHS.unit_execution_folder_test
+UNIT_EXECUTION_FOLDER_BUILD = PATHS.unit_execution_folder_build
+UNIT_RESULT_FOLDER = PATHS.unit_result_folder
 RESULT_REPORT = "total_result_report.txt"
 
-DOCKER_MOUNT = docker_mount_path(SCRIPT_PATH.parent)
+DOCKER_MOUNT = docker_mount_path(PATHS.docker_mount_source)
 
 DOCKER_BASE = [
     "docker",

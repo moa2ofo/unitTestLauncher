@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 from __future__ import annotations
 
@@ -26,9 +25,12 @@ from common_utils import (
     move_file
 
 )
+from path_config_loader import load_paths
 
-# Default MISRA rules file path (adjust if needed)
-MISRA_RULES_PATH = Path(__file__).resolve().parent / "misra" / "misra_c_2012_headlines.txt"
+PATHS = load_paths(__file__)
+
+# Default MISRA rules file path (configurable via YAML)
+MISRA_RULES_PATH = PATHS.sw_cmp_misra_rules_path
 
 
 def copy_into_workspace(src_dir: Path, workspace: Path, name: str) -> Path:
@@ -344,8 +346,8 @@ def generate_reports(codebase_root: Path, misra_rules_path: Path) -> None:
 
 
 def main():
-    script_dir = Path(__file__).resolve().parent
-    repo_root = script_dir.parent  # repo root / codebase_root
+    script_dir = PATHS.script_dir
+    repo_root = PATHS.sw_cmp_repo_root
 
     preflight_check(
         script_dir=script_dir,
@@ -355,16 +357,16 @@ def main():
         optional_files=[(MISRA_RULES_PATH, "MISRA rules file")],
     )
 
-    template_path = script_dir / "CMakeLists.txt"
+    template_path = PATHS.sw_cmp_template_path
     template_content = template_path.read_text(encoding="utf-8", errors="replace")
 
     # Copy cfg/pltf from repo root into workspace (script_dir)
-    delete_folder(script_dir/"build")
-    delete_folder(repo_root/"build")
-    delete_file(script_dir/"cppcheck_misra_results.html")
-    delete_file(repo_root/"cppcheck_misra_results.html")
-    copy_entire_folder(repo_root /"cfg", script_dir/ "cfg",overwrite=True)
-    copy_entire_folder(repo_root / "pltf", script_dir/ "pltf",overwrite=True)
+    delete_folder(PATHS.sw_cmp_workspace_build_dir)
+    delete_folder(PATHS.sw_cmp_repo_build_dir)
+    delete_file(PATHS.sw_cmp_workspace_report_file)
+    delete_file(PATHS.sw_cmp_repo_report_file)
+    copy_entire_folder(PATHS.sw_cmp_repo_cfg_dir, PATHS.sw_cmp_workspace_cfg_dir, overwrite=True)
+    copy_entire_folder(PATHS.sw_cmp_repo_pltf_dir, PATHS.sw_cmp_workspace_pltf_dir, overwrite=True)
     created: list[Path] = []
     try:
         created = scan_components(repo_root, template_content)
@@ -376,15 +378,15 @@ def main():
     generate_reports(repo_root, MISRA_RULES_PATH)
 
 
-    move_file(script_dir/"cppcheck_misra_results.html", repo_root/"cppcheck_misra_results.html")
+    move_file(PATHS.sw_cmp_workspace_report_file, PATHS.sw_cmp_repo_report_file)
 
     # Copy build back to repo root (if it exists)
 
-    copy_entire_folder(script_dir / "build", repo_root/ "build",overwrite=True)
+    copy_entire_folder(PATHS.sw_cmp_workspace_build_dir, PATHS.sw_cmp_repo_build_dir, overwrite=True)
 
     # Cleanup temporary cfg/pltf in workspace
-    delete_folder(script_dir/ "cfg")
-    delete_folder(script_dir/ "pltf")
+    delete_folder(PATHS.sw_cmp_workspace_cfg_dir)
+    delete_folder(PATHS.sw_cmp_workspace_pltf_dir)
     info("Done.")
 
 

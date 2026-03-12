@@ -1,8 +1,0 @@
-paths:
-  project_root: ..
-  git_result: ../UnitTestResults
-  unit_execution_folder: utExecutionAndResults/utUnderTest
-  unit_execution_folder_test: utExecutionAndResults/utUnderTest/test
-  unit_execution_folder_build: utExecutionAndResults/utUnderTest/build
-  unit_result_folder: utExecutionAndResults/utResults
-  docker_mount_source: .

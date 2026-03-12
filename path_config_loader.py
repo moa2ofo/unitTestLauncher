@@ -18,6 +18,17 @@ class PathsConfig:
     unit_execution_folder_build: Path
     unit_result_folder: Path
     docker_mount_source: Path
+    sw_cmp_repo_root: Path
+    sw_cmp_misra_rules_path: Path
+    sw_cmp_template_path: Path
+    sw_cmp_workspace_build_dir: Path
+    sw_cmp_repo_build_dir: Path
+    sw_cmp_workspace_report_file: Path
+    sw_cmp_repo_report_file: Path
+    sw_cmp_workspace_cfg_dir: Path
+    sw_cmp_repo_cfg_dir: Path
+    sw_cmp_workspace_pltf_dir: Path
+    sw_cmp_repo_pltf_dir: Path
 
 
 _REQUIRED_KEYS = {
@@ -28,6 +39,17 @@ _REQUIRED_KEYS = {
     "unit_execution_folder_build",
     "unit_result_folder",
     "docker_mount_source",
+    "sw_cmp_repo_root",
+    "sw_cmp_misra_rules_path",
+    "sw_cmp_template_path",
+    "sw_cmp_workspace_build_dir",
+    "sw_cmp_repo_build_dir",
+    "sw_cmp_workspace_report_file",
+    "sw_cmp_repo_report_file",
+    "sw_cmp_workspace_cfg_dir",
+    "sw_cmp_repo_cfg_dir",
+    "sw_cmp_workspace_pltf_dir",
+    "sw_cmp_repo_pltf_dir",
 }
 
 
@@ -59,7 +81,7 @@ def _load_yaml(config_path: Path) -> dict[str, Any]:
     return paths_section
 
 
-def load_paths(current_file: str | Path, config_name: str = "unit_tests_paths.yml") -> PathsConfig:
+def load_paths(current_file: str | Path, config_name: str = "path_cfg.yml") -> PathsConfig:
     script_path = Path(current_file).resolve()
     script_dir = script_path.parent
     config_path = script_dir / config_name
@@ -75,4 +97,15 @@ def load_paths(current_file: str | Path, config_name: str = "unit_tests_paths.ym
         unit_execution_folder_build=_resolve_path(script_dir, paths["unit_execution_folder_build"]),
         unit_result_folder=_resolve_path(script_dir, paths["unit_result_folder"]),
         docker_mount_source=_resolve_path(script_dir, paths["docker_mount_source"]),
+        sw_cmp_repo_root=_resolve_path(script_dir, paths["sw_cmp_repo_root"]),
+        sw_cmp_misra_rules_path=_resolve_path(script_dir, paths["sw_cmp_misra_rules_path"]),
+        sw_cmp_template_path=_resolve_path(script_dir, paths["sw_cmp_template_path"]),
+        sw_cmp_workspace_build_dir=_resolve_path(script_dir, paths["sw_cmp_workspace_build_dir"]),
+        sw_cmp_repo_build_dir=_resolve_path(script_dir, paths["sw_cmp_repo_build_dir"]),
+        sw_cmp_workspace_report_file=_resolve_path(script_dir, paths["sw_cmp_workspace_report_file"]),
+        sw_cmp_repo_report_file=_resolve_path(script_dir, paths["sw_cmp_repo_report_file"]),
+        sw_cmp_workspace_cfg_dir=_resolve_path(script_dir, paths["sw_cmp_workspace_cfg_dir"]),
+        sw_cmp_repo_cfg_dir=_resolve_path(script_dir, paths["sw_cmp_repo_cfg_dir"]),
+        sw_cmp_workspace_pltf_dir=_resolve_path(script_dir, paths["sw_cmp_workspace_pltf_dir"]),
+        sw_cmp_repo_pltf_dir=_resolve_path(script_dir, paths["sw_cmp_repo_pltf_dir"]),
     )

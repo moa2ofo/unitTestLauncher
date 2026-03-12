@@ -576,8 +576,11 @@ def main():
             clean_h = strip_function_keywords_in_header("\n".join(header_lines))
             write_text(src_dir / f"{fn_name}.h", clean_h)
 
-            # ================== src/<fn>.c ==================
-            impl = [
+            # ================== src/<fn>_help.h ==================
+            help_lines = [
+                f"#ifndef TEST_{fn_name.upper()}_HELP_H",
+                f"#define TEST_{fn_name.upper()}_HELP_H",
+                "",
                 f'#include "{fn_name}.h"',
                 "#include <stddef.h>",
                 "#include <string.h>",
@@ -586,18 +589,18 @@ def main():
 
             # Dichiara solo le globali non statiche usate dalla funzione
             if used_glob_usr:
-                impl.append("/* non-static globals used by this function */")
+                help_lines.append("/* non-static globals used by this function */")
                 for usr in sorted(used_glob_usr):
                     v = tu_globals[usr]
                     orig = text_from_extent(v.extent).strip()
                     orig = re.sub(r"^\s*extern\s+", "", orig)
                     if not orig.endswith(";"):
                         orig += ";"
-                    impl.append(orig)
-                impl.append("")
+                    help_lines.append(orig)
+                help_lines.append("")
 
             if used_stat_usr:
-                impl.append("/* static globals (copied) */")
+                help_lines.append("/* static globals (copied) */")
                 for usr in sorted(used_stat_usr):
                     v = tu_globals[usr]
                     t = v.type
@@ -605,7 +608,7 @@ def main():
                     static_src = text_from_extent(v.extent).strip()
                     if not static_src.endswith(";"):
                         static_src += ";"
-                    impl.append(static_src)
+                    help_lines.append(static_src)
 
                     v_is_const = is_const_qualified(t)
                     v_is_array = is_array_type(t)
@@ -614,19 +617,19 @@ def main():
                         elem_t = array_elem_type_spelling(t)
                         cnt = array_count_or_none(t)
 
-                        impl.append(
+                        help_lines.append(
                             f"{'const ' if v_is_const else ''}{elem_t}* get_{vname}_ptr(void) {{ return {vname}; }}"
                         )
 
                         if cnt is not None:
-                            impl.append(
+                            help_lines.append(
                                 f"size_t get_{vname}_size(void) {{ return (size_t){cnt}; }}"
                             )
                         else:
-                            impl.append("size_t get_{vname}_size(void) { return 0; }")
+                            help_lines.append("size_t get_{vname}_size(void) { return 0; }")
 
                         if (not v_is_const) and (cnt is not None):
-                            impl.append(
+                            help_lines.append(
                                 f"void set_{vname}(const {elem_t}* src, size_t n) {{\n"
                                 f"    size_t m = (n < (size_t){cnt}) ? n : (size_t){cnt};\n"
                                 f"    memcpy({vname}, src, m * sizeof({elem_t}));\n"
@@ -635,14 +638,24 @@ def main():
 
                     else:
                         tname = t.spelling
-                        impl.append(f"{tname} get_{vname}(void) {{ return {vname}; }}")
+                        help_lines.append(f"{tname} get_{vname}(void) {{ return {vname}; }}")
                         if not v_is_const:
-                            impl.append(f"void set_{vname}({tname} val) {{ {vname} = val; }}")
+                            help_lines.append(f"void set_{vname}({tname} val) {{ {vname} = val; }}")
 
-                impl.append("")
+                help_lines.append("")
 
-            impl.append("/* FUNCTION TO TEST */")
-            impl.append(fn_text)
+            help_lines.append(f"#endif /* TEST_{fn_name.upper()}_HELP_H */\n")
+
+            clean_help = strip_function_keywords_in_header("\n".join(help_lines))
+            write_text(src_dir / f"{fn_name}_help.h", clean_help)
+
+            # ================== src/<fn>.c ==================
+            impl = [
+                f'#include "{fn_name}_help.h"',
+                "",
+                "/* FUNCTION TO TEST */",
+                fn_text,
+            ]
 
             clean_c = strip_function_keywords_in_header("\n".join(impl))
             write_text(src_dir / f"{fn_name}.c", clean_c)

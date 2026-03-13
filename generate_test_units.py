@@ -1,16 +1,16 @@
 import argparse
 import re
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Set, Tuple, Optional
 from clang.cindex import Index, Cursor, CursorKind, StorageClass, TypeKind
-from typing import Optional  # aggiungi Optional agli import
+
 
 from path_config_loader import load_paths
 
 DOXY_BLOCK_START = "/**"
 DOXY_BLOCK_END = "*/"
 DOXY_LINE_PREFIXES = ("///", "//!")
-REMOVE_KEYWORDS = ["static", "inline"]   # ← aggiorni questa lista e tutto funziona
+
 
 def strip_function_keywords_in_header(text: str) -> str:
     """
@@ -411,7 +411,7 @@ def main():
 
     root = Path(args.root).resolve()         # e.g., /workspace
     parent = root.parent                     # common parent of /workspace, /pltf, /cfg, /unitTest
-    out_root = Path(args.out_root).resolve() if args.out_root else (parent / "unitTest")
+    out_root = Path(args.out_root).resolve() if args.out_root else paths.unit_test_root
 
     # Scan roots from YAML config instead of assuming ../pltf and ../cfg
     scan_roots: List[Path] = [paths.sw_cmp_repo_pltf_dir, paths.sw_cmp_repo_cfg_dir]
@@ -449,7 +449,6 @@ def main():
             src_dir = test_pkg_dir / "src"
             test_dir = test_pkg_dir / "test"
 
-            test_exists = test_pkg_dir.exists()
             src_exists = src_dir.exists()
             src_empty = (not src_exists) or (not any(src_dir.iterdir()))
             test_file_path = test_dir / f"test_{fn_name}.c"

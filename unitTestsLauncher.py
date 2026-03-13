@@ -65,12 +65,9 @@ def preflight_checks(project_root: Path):
 
 @dataclass
 class TestResultRow:
-    module_function_name: str   # C function under test (reported as "function_name")
+    module_function_name: str   # C function under test
     test_name: str              # Unity test function name
-    total: str
-    passed: str
-    failed: str
-    ignored: str
+    status: str
     linesCvrg: str
     branchesCvrg: str
     date_time: str
@@ -79,15 +76,11 @@ class TestResultRow:
         return (
             f"{self.module_function_name},"
             f"{self.test_name},"
-            f"{self.total},"
-            f"{self.passed},"
-            f"{self.failed},"
-            f"{self.ignored},"
+            f"{self.status},"
             f"{self.linesCvrg},"
             f"{self.branchesCvrg},"
             f"{self.date_time}"
         )
-
 
 @dataclass
 class UnitModule:
@@ -392,69 +385,8 @@ def load_result_rows(summary_file: Path) -> dict[str, TestResultRow]:
     if not lines:
         return rows
 
-    first_non_empty = next((ln for ln in lines if ln.strip()), "")
-    # Default CSV header (without Tester)
-    header_csv = "function_name,test_name,total,passed,failed,ignored,linesCvrg,branchesCvrg,Date and time"
+    header_csv = "function_name,test_name,status,linesCvrg,branchesCvrg,Date and time"
 
-    if first_non_empty.startswith("|"):
-        header_cells: list[str] = []
-        data_rows_cells: list[list[str]] = []
-
-        for line in lines:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            if stripped.startswith("|-"):
-                continue
-            if not stripped.startswith("|"):
-                continue
-            cells = [c.strip() for c in stripped.split("|")[1:-1]]
-            if not header_cells:
-                header_cells = cells
-            else:
-                data_rows_cells.append(cells)
-
-        def idx(col_name: str, default: int = -1) -> int:
-            try:
-                return header_cells.index(col_name)
-            except ValueError:
-                return default
-
-        idx_module_fn = idx("function_name", 0)
-        idx_test_name = idx("test_name", 1)
-        idx_total     = idx("total")
-        idx_passed    = idx("passed")
-        idx_failed    = idx("failed")
-        idx_ignored   = idx("ignored")
-        idx_lines     = idx("linesCvrg")
-        idx_branches  = idx("branchesCvrg")
-        idx_date      = idx("Date and time")
-        # Any legacy "Tester" column is ignored
-
-        def get_cell(row: list[str], i: int) -> str:
-            if i is None or i < 0 or i >= len(row):
-                return ""
-            return row[i]
-
-        for row in data_rows_cells:
-            fn = get_cell(row, idx_module_fn)
-            tn = get_cell(row, idx_test_name)
-            if not tn:
-                continue
-            rows[tn] = TestResultRow(
-                module_function_name=fn,
-                test_name=tn,
-                total=get_cell(row, idx_total),
-                passed=get_cell(row, idx_passed),
-                failed=get_cell(row, idx_failed),
-                ignored=get_cell(row, idx_ignored),
-                linesCvrg=get_cell(row, idx_lines),
-                branchesCvrg=get_cell(row, idx_branches),
-                date_time=get_cell(row, idx_date),
-            )
-        return rows
-
-    # CSV path
     header_line = lines[0].strip()
     if "function_name" not in header_line:
         header_line = header_csv
@@ -474,16 +406,12 @@ def load_result_rows(summary_file: Path) -> dict[str, TestResultRow]:
 
         tn = hget(parts, "test_name")
         if not tn:
-            # Legacy rows without test_name cannot be reconstructed reliably; skip
             continue
 
         rows[tn] = TestResultRow(
             module_function_name=hget(parts, "function_name"),
             test_name=tn,
-            total=hget(parts, "total"),
-            passed=hget(parts, "passed"),
-            failed=hget(parts, "failed"),
-            ignored=hget(parts, "ignored"),
+            status=hget(parts, "status"),
             linesCvrg=hget(parts, "linesCvrg"),
             branchesCvrg=hget(parts, "branchesCvrg"),
             date_time=hget(parts, "Date and time"),
@@ -496,6 +424,8 @@ def update_total_result_report(build_folder: Path, function_name: str, report_fo
     results_dir = build_folder / "gcov" / "results"
     coverage_dir = build_folder / "artifacts" / "gcov" / "gcovr"
     coverage_file = None
+
+    now_str = datetime.now().strftime("%d/%m/%y %H:%M")
 
     # Cerca tutti gli HTML che iniziano con "GcovCoverageResults." ma NON contengono "_help"
     html_candidates = sorted(coverage_dir.glob("GcovCoverageResults*.html"))
@@ -563,10 +493,7 @@ def update_total_result_report(build_folder: Path, function_name: str, report_fo
         rows[test_name] = TestResultRow(
             module_function_name=function_name,   # real C FUNCTION under test
             test_name=test_name,                  # Unity test function name
-            total="PASSED" if passed else "FAILED",
-            passed="PASSED" if passed else "FAILED",
-            failed="-" if passed else "FAILED",
-            ignored="-",
+            status="PASSED" if passed else "FAILED",
             linesCvrg=linesCvrg or "-",
             branchesCvrg=branchesCvrg or "-",
             date_time=now_str,
@@ -575,7 +502,7 @@ def update_total_result_report(build_folder: Path, function_name: str, report_fo
     # ---------------------------------------------------------------------
     # Write CSV (no Tester column)
     # ---------------------------------------------------------------------
-    header = "function_name,test_name,total,passed,failed,ignored,linesCvrg,branchesCvrg,Date and time"
+    header = "function_name,test_name,status,linesCvrg,branchesCvrg,Date and time"
     lines_out = [header] + [row.to_csv_line() for row in rows.values()]
     summary_file.write_text("\n".join(lines_out) + "\n", encoding="utf-8")
 

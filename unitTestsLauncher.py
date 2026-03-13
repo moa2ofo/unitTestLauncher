@@ -449,6 +449,10 @@ def update_total_result_report(build_folder: Path, function_name: str, report_fo
     # ---------------------------------------------------------------------
     test_files = list(results_dir.glob("*.pass")) + list(results_dir.glob("*.fail"))
 
+
+
+
+
     # Extract function name from file name (remove extension)
     # E.g. "test_myFunc.pass" → "myFunc"
     def extract_func_name(path: Path) -> str:
@@ -483,22 +487,35 @@ def update_total_result_report(build_folder: Path, function_name: str, report_fo
         warn("Coverage file does not exist or è stato ignorato perché conteneva '_help'.")
 
 
-    # ---------------------------------------------------------------------
-    # Process every test file found
-    # ---------------------------------------------------------------------
-    for f in test_files:
-        test_name = extract_func_name(f)
-        passed = f.suffix == ".pass"
 
-        rows[test_name] = TestResultRow(
-            module_function_name=function_name,   # real C FUNCTION under test
-            test_name=test_name,                  # Unity test function name
-            status="PASSED" if passed else "FAILED",
-            linesCvrg=linesCvrg or "-",
-            branchesCvrg=branchesCvrg or "-",
+    # Se non ci sono test, segnala errore e aggiungi riga "NOT EXC"
+    if not test_files:
+        warn("Nessun test trovato in gcov/results/.")
+        rows["NO_TESTS"] = TestResultRow(
+            module_function_name=function_name,
+            test_name="NO_TESTS",
+            status="NOT EXC",
+            linesCvrg="-",
+            branchesCvrg="-",
             date_time=now_str,
         )
+    else:  
+        # ---------------------------------------------------------------------
+        # Process every test file found
+        # ---------------------------------------------------------------------
+        for f in test_files:
+            test_name = extract_func_name(f)
+            passed = f.suffix == ".pass"
 
+            rows[test_name] = TestResultRow(
+                module_function_name=function_name,   # real C FUNCTION under test
+                test_name=test_name,                  # Unity test function name
+                status="PASSED" if passed else "FAILED",
+                linesCvrg=linesCvrg or "-",
+                branchesCvrg=branchesCvrg or "-",
+                date_time=now_str,
+            )
+            
     # ---------------------------------------------------------------------
     # Write CSV (no Tester column)
     # ---------------------------------------------------------------------

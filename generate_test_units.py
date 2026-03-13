@@ -409,7 +409,9 @@ def main():
     workspace_root = Path(args.root).resolve()
     paths = load_paths(__file__)
 
-    out_root = Path(args.out_root).resolve() if args.out_root else paths.unit_test_root
+    root = Path(args.root).resolve()         # e.g., /workspace
+    parent = root.parent                     # common parent of /workspace, /pltf, /cfg, /unitTest
+    out_root = Path(args.out_root).resolve() if args.out_root else (parent / "unitTest")
 
     # Scan roots from YAML config instead of assuming ../pltf and ../cfg
     scan_roots: List[Path] = [paths.sw_cmp_repo_pltf_dir, paths.sw_cmp_repo_cfg_dir]

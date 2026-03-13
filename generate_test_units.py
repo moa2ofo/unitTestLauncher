@@ -5,6 +5,8 @@ from typing import Dict, List, Set, Tuple
 from clang.cindex import Index, Cursor, CursorKind, StorageClass, TypeKind
 from typing import Optional  # aggiungi Optional agli import
 
+from path_config_loader import load_paths
+
 DOXY_BLOCK_START = "/**"
 DOXY_BLOCK_END = "*/"
 DOXY_LINE_PREFIXES = ("///", "//!")
@@ -404,19 +406,20 @@ def main():
     # pass-through extra clang args after '--'
     args, extra_clang = ap.parse_known_args()
 
-    root = Path(args.root).resolve()         # e.g., /workspace
-    parent = root.parent                     # common parent of /workspace, /pltf, /cfg, /unitTest
-    out_root = Path(args.out_root).resolve() if args.out_root else (parent / "unitTest")
+    workspace_root = Path(args.root).resolve()
+    paths = load_paths(__file__)
 
-    # Scan exactly ../pltf and ../cfg
-    scan_roots: List[Path] = [parent / "pltf", parent / "cfg"]
+    out_root = Path(args.out_root).resolve() if args.out_root else paths.unit_test_root
 
-    # Clang args: std + includes for ../pltf and ../cfg (+ local) + extras
+    # Scan roots from YAML config instead of assuming ../pltf and ../cfg
+    scan_roots: List[Path] = [paths.sw_cmp_repo_pltf_dir, paths.sw_cmp_repo_cfg_dir]
+
+    # Clang args: std + includes from YAML (+ workspace root) + extras
     clang_args: List[str] = ["-std=c11"]
     for inc in scan_roots:
         clang_args.append(f"-I{inc}")
-    clang_args.append("-I.")                 # local
-    clang_args.extend(extra_clang)           # pass-through
+    clang_args.append(f"-I{workspace_root}")
+    clang_args.extend(extra_clang)
 
     index = Index.create()
 

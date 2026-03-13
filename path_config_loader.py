@@ -18,6 +18,7 @@ class PathsConfig:
     unit_execution_folder_build: Path
     unit_result_folder: Path
     docker_mount_source: Path
+    unit_test_root: Path
     sw_cmp_repo_root: Path
     sw_cmp_misra_rules_path: Path
     sw_cmp_template_path: Path
@@ -39,6 +40,7 @@ _REQUIRED_KEYS = {
     "unit_execution_folder_build",
     "unit_result_folder",
     "docker_mount_source",
+    "unit_test_root",
     "sw_cmp_repo_root",
     "sw_cmp_misra_rules_path",
     "sw_cmp_template_path",
@@ -97,6 +99,7 @@ def load_paths(current_file: str | Path, config_name: str = "path_cfg.yml") -> P
         unit_execution_folder_build=_resolve_path(script_dir, paths["unit_execution_folder_build"]),
         unit_result_folder=_resolve_path(script_dir, paths["unit_result_folder"]),
         docker_mount_source=_resolve_path(script_dir, paths["docker_mount_source"]),
+        unit_test_root=_resolve_path(script_dir, paths["unit_test_root"]),
         sw_cmp_repo_root=_resolve_path(script_dir, paths["sw_cmp_repo_root"]),
         sw_cmp_misra_rules_path=_resolve_path(script_dir, paths["sw_cmp_misra_rules_path"]),
         sw_cmp_template_path=_resolve_path(script_dir, paths["sw_cmp_template_path"]),

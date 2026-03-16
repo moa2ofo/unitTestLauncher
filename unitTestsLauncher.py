@@ -70,7 +70,7 @@ class TestResultRow:
     status: str
     linesCvrg: str
     branchesCvrg: str
-    date_time: str
+
 
     def to_csv_line(self) -> str:
         return (
@@ -79,7 +79,6 @@ class TestResultRow:
             f"{self.status},"
             f"{self.linesCvrg},"
             f"{self.branchesCvrg},"
-            f"{self.date_time}"
         )
 
 @dataclass
@@ -385,7 +384,7 @@ def load_result_rows(summary_file: Path) -> dict[str, TestResultRow]:
     if not lines:
         return rows
 
-    header_csv = "function_name,test_name,status,linesCvrg,branchesCvrg,Date and time"
+    header_csv = "function_name,test_name,status,linesCvrg,branchesCvrg"
 
     header_line = lines[0].strip()
     if "function_name" not in header_line:
@@ -414,7 +413,6 @@ def load_result_rows(summary_file: Path) -> dict[str, TestResultRow]:
             status=hget(parts, "status"),
             linesCvrg=hget(parts, "linesCvrg"),
             branchesCvrg=hget(parts, "branchesCvrg"),
-            date_time=hget(parts, "Date and time"),
         )
 
     return rows
@@ -497,7 +495,6 @@ def update_total_result_report(build_folder: Path, function_name: str, report_fo
             status="NOT EXC",
             linesCvrg="-",
             branchesCvrg="-",
-            date_time=now_str,
         )
     else:  
         # ---------------------------------------------------------------------
@@ -513,13 +510,12 @@ def update_total_result_report(build_folder: Path, function_name: str, report_fo
                 status="PASSED" if passed else "FAILED",
                 linesCvrg=linesCvrg or "-",
                 branchesCvrg=branchesCvrg or "-",
-                date_time=now_str,
             )
             
     # ---------------------------------------------------------------------
     # Write CSV (no Tester column)
     # ---------------------------------------------------------------------
-    header = "function_name,test_name,status,linesCvrg,branchesCvrg,Date and time"
+    header = "function_name,test_name,status,linesCvrg,branchesCvrg"
     lines_out = [header] + [row.to_csv_line() for row in rows.values()]
     summary_file.write_text("\n".join(lines_out) + "\n", encoding="utf-8")
 

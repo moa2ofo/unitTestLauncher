@@ -407,7 +407,8 @@ def load_result_rows(summary_file: Path) -> dict[str, TestResultRow]:
         if not tn:
             continue
 
-        rows[tn] = TestResultRow(
+        key = f"{hget(parts, 'function_name')}:{tn}"
+        rows[key] = TestResultRow(
             module_function_name=hget(parts, "function_name"),
             test_name=tn,
             status=hget(parts, "status"),
@@ -489,7 +490,9 @@ def update_total_result_report(build_folder: Path, function_name: str, report_fo
     # Se non ci sono test, segnala errore e aggiungi riga "NOT EXC"
     if not test_files:
         warn("Nessun test trovato in gcov/results/.")
-        rows[function_name] = TestResultRow(
+
+        key = f"{function_name}:NO_TESTS"
+        rows[key] = TestResultRow(
             module_function_name=function_name,
             test_name="NO_TESTS",
             status="NOT EXC",
@@ -504,7 +507,9 @@ def update_total_result_report(build_folder: Path, function_name: str, report_fo
             test_name = extract_func_name(f)
             passed = f.suffix == ".pass"
 
-            rows[test_name] = TestResultRow(
+
+            key = f"{function_name}:{test_name}"
+            rows[key] = TestResultRow(
                 module_function_name=function_name,   # real C FUNCTION under test
                 test_name=test_name,                  # Unity test function name
                 status="PASSED" if passed else "FAILED",
@@ -518,7 +523,7 @@ def update_total_result_report(build_folder: Path, function_name: str, report_fo
     header = "function_name,test_name,status,linesCvrg,branchesCvrg"
     lines_out = [header] + [row.to_csv_line() for row in rows.values()]
     summary_file.write_text("\n".join(lines_out) + "\n", encoding="utf-8")
-
+    print(rows)
     info(f"Updated summary for {len(test_files)} test results → {summary_file}")
 
 

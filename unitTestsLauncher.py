@@ -491,7 +491,7 @@ def update_total_result_report(build_folder: Path, function_name: str, report_fo
     # Se non ci sono test, segnala errore e aggiungi riga "NOT EXC"
     if not test_files:
         warn("Nessun test trovato in gcov/results/.")
-        rows["NO_TESTS"] = TestResultRow(
+        rows[function_name] = TestResultRow(
             module_function_name=function_name,
             test_name="NO_TESTS",
             status="NOT EXC",
